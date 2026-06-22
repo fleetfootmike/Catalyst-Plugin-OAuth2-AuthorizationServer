@@ -5,6 +5,7 @@ use Carp ();
 use Crypt::JWT qw/encode_jwt/;
 use Bytes::Random::Secure qw/random_bytes/;
 use MIME::Base64 qw/encode_base64url/;
+use JSON::MaybeXS ();
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Error;
 use namespace::clean;
 
@@ -79,6 +80,35 @@ sub mint_access_token ( $self, $claims, $aud = undef ) {
         alg     => $self->jwt_alg,
         key     => $self->signing_key,
     );
+}
+
+sub _invalid_metadata ( $self, $desc ) {
+    Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
+        error             => 'invalid_client_metadata',
+        error_description => $desc,
+        http_status       => 400,
+    );
+}
+
+sub register_client ( $self, $metadata ) {
+    my $uris = $metadata->{redirect_uris};
+    $self->_invalid_metadata('redirect_uris is required')
+        unless ref $uris eq 'ARRAY' && @$uris;
+    $self->_invalid_metadata('too many redirect_uris')
+        if @$uris > $self->redirect_uris_max;
+    for my $u (@$uris) {
+        $self->_invalid_metadata('redirect_uri not a string')
+            if ref $u || !defined $u || !length $u;
+        $self->_invalid_metadata('redirect_uri too long')
+            if length $u > $self->redirect_uri_max_length;
+    }
+
+    my $json = JSON::MaybeXS->new( utf8 => 1, canonical => 1 );
+    $self->_invalid_metadata('client metadata too large')
+        if length( $json->encode($metadata) ) > $self->metadata_max_bytes;
+
+    my $client = { %$metadata, client_id => $self->_random_token(16) };
+    return $self->store->create_client($client);
 }
 
 1;
