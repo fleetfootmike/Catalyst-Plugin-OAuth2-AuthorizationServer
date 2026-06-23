@@ -82,6 +82,75 @@ sub mint_access_token ( $self, $claims, $aud = undef ) {
     );
 }
 
+# Authorize errors are redirect-safe only AFTER the client and redirect_uri
+# have been validated (RFC 6749 §4.1.2.1). Pass redirect_uri (+ state) for
+# those so the seam can 302 the error back to the client; omit it for
+# unknown-client / bad-redirect errors so the seam renders them directly and
+# never redirects to an untrusted URI.
+sub _authz_error ( $self, $error, $desc, %opt ) {
+    Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
+        error             => $error,
+        error_description => $desc,
+        ( exists $opt{redirect_uri} ? ( redirect_uri => $opt{redirect_uri} ) : () ),
+        ( exists $opt{state}        ? ( state        => $opt{state} )        : () ),
+        http_status       => 400,
+    );
+}
+
+sub validate_authorize ( $self, $params ) {
+    my $state = $params->{state};
+
+    # Client + redirect_uri first; their failures are NOT redirect-safe.
+    my $client = $self->store->find_client( $params->{client_id} // '' );
+    $self->_authz_error( 'invalid_client', 'unknown client' ) unless $client;
+
+    my $redirect = $params->{redirect_uri} // '';
+    my $known = $client->{redirect_uris} || [];
+    $self->_authz_error( 'invalid_client', 'redirect_uri mismatch' )
+        unless grep { $_ eq $redirect } @$known;
+
+    # From here the redirect_uri is trusted, so further errors are redirect-safe.
+    my %rd = ( redirect_uri => $redirect, state => $state );
+
+    $self->_authz_error( 'invalid_request', 'response_type must be code', %rd )
+        unless ( $params->{response_type} // '' ) eq 'code';
+
+    my $challenge = $params->{code_challenge};
+    $self->_authz_error( 'invalid_request', 'code_challenge required', %rd )
+        unless defined $challenge && length $challenge;
+    $self->_authz_error( 'invalid_request', 'code_challenge_method must be S256', %rd )
+        unless ( $params->{code_challenge_method} // '' ) eq 'S256';
+
+    my $scope = $params->{scope};
+    if ( defined $scope && length $scope && $self->scopes_supported ) {
+        my %ok = map { $_ => 1 } @{ $self->scopes_supported };
+        for my $s ( split /\s+/, $scope ) {
+            $self->_authz_error( 'invalid_scope', "unsupported scope: $s", %rd )
+                unless $ok{$s};
+        }
+    }
+
+    my $resource = $params->{resource} // '';
+    my %valid_res = map { $_ => 1 } @{ $self->_resource_list };
+    $self->_authz_error( 'invalid_target', 'unknown resource', %rd )
+        unless $valid_res{$resource};
+
+    my $rid  = $self->_random_token(24);
+    my $data = {
+        client_id             => $params->{client_id},
+        redirect_uri          => $redirect,
+        response_type         => 'code',
+        code_challenge        => $challenge,
+        code_challenge_method => 'S256',
+        scope                 => $scope,
+        resource              => $resource,
+        state                 => $state,
+    };
+    $self->store->save_authorization_request(
+        $rid, $data, $self->_now + 600 );
+    return { request_id => $rid };
+}
+
 sub _invalid_metadata ( $self, $desc ) {
     Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
         error             => 'invalid_client_metadata',
