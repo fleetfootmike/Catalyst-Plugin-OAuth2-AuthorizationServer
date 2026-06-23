@@ -34,6 +34,30 @@ like(
     qr/resource/,
     'empty resource arrayref rejected'
 );
+like(
+    exception {
+        $class->new( store => T::Store->new, signing_key => $key,
+            issuer => 'i', resource => 'r', access_ttl => 0 );
+    },
+    qr/access_ttl/,
+    'non-positive access_ttl rejected'
+);
+like(
+    exception {
+        $class->new( store => T::Store->new, signing_key => $key,
+            issuer => 'i', resource => 'r', refresh_ttl => -1 );
+    },
+    qr/refresh_ttl/,
+    'negative refresh_ttl rejected'
+);
+like(
+    exception {
+        $class->new( store => T::Store->new, signing_key => $key,
+            issuer => 'i', resource => 'r', code_ttl => 0 );
+    },
+    qr/code_ttl/,
+    'non-positive code_ttl rejected'
+);
 
 # mint a token and verify the claims round-trip with the same key
 my $before = time;

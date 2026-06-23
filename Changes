@@ -2,3 +2,5 @@ Revision history for Catalyst-Plugin-OAuth2-AuthorizationServer
 
 0.001     Unreleased
           - Initial MCP-profile OAuth 2.1 Authorization Server.
+          - Note: refresh rotation revokes the presented token only; family revocation
+            on reuse is a planned enhancement.

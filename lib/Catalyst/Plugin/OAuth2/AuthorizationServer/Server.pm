@@ -39,8 +39,9 @@ sub BUILD ( $self, $args ) {
     Carp::croak 'resource must be a non-empty scalar or arrayref'
         unless @{ $self->_resource_list };
     for my $ttl (qw/access_ttl refresh_ttl code_ttl/) {
+        my $v = $self->$ttl;
         Carp::croak "$ttl must be a positive integer"
-            unless $self->$ttl && $self->$ttl > 0;
+            if !$v || $v <= 0;
     }
 }
 

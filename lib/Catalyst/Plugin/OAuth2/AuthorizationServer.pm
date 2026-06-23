@@ -162,6 +162,33 @@ sub oauth_token ( $c ) {
 Catalyst::Plugin::OAuth2::AuthorizationServer - MCP-profile OAuth 2.1
 Authorization Server plugin for Catalyst
 
+=head1 SYNOPSIS
+
+    package MyApp;
+    use Catalyst qw/+Catalyst::Plugin::OAuth2::AuthorizationServer/;
+
+    __PACKAGE__->config(
+        'Catalyst::Plugin::OAuth2::AuthorizationServer' => {
+            store       => 'OAuth::Store',           # $c->model name, or an object
+            signing_key => $ENV{MCP_OAUTH_JWT_KEY},
+            issuer      => 'https://api.example',
+            resource    => 'https://api.example/mcp',
+            scopes_supported => [ 'gobby:read' ],
+        },
+    );
+
+    # the app provides the authn/consent hook; the plugin calls it after it has
+    # validated /authorize and stashed the request under an opaque request_id
+    sub oauth_authenticate ( $c, $request_id ) {
+        # 302 to your SPA consent route carrying $request_id; after consent the
+        # SPA posts back and you call $c->oauth_issue_code($user_id, $request_id)
+    }
+
+    __PACKAGE__->setup;
+
+In a controller, mount the routes onto the plugin methods: C<oauth_metadata>,
+C<oauth_register>, C<oauth_authorize>, C<oauth_token>.
+
 =head1 DESCRIPTION
 
 Adds an OAuth 2.1 Authorization Server (the MCP profile: public PKCE-S256

@@ -21,6 +21,7 @@ Test::Perl::Critic->import(
         'ValuesAndExpressions::ProhibitVersionStrings', # project uses use v5.36
         'ErrorHandling::RequireCarping',            # we throw structured errors/objects, not strings
         'Moose::RequireCleanNamespace',             # misses MooseX::MarkAsMethods
+        'Subroutines::ProhibitUnusedPrivateSubroutines', # Moo lazy builders (_build_*) are called by Moo internals
     ],
     -include => [ 'CodeLayout::ProhibitTrailingWhitespace' ],
 );
