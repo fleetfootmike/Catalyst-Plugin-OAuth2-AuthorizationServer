@@ -18,6 +18,7 @@ WriteMakefile(
         'Digest::SHA'          => 0,
         'MIME::Base64'         => '3.11',   # encode_base64url
         'JSON::MaybeXS'        => 0,
+        'Try::Tiny'            => 0,
         'URI'                  => 0,
         'Catalyst::Runtime'    => '5.90000',
     },

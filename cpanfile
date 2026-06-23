@@ -8,6 +8,7 @@ requires 'Bytes::Random::Secure';
 requires 'Digest::SHA';
 requires 'MIME::Base64', '3.11';
 requires 'JSON::MaybeXS';
+requires 'Try::Tiny';
 requires 'URI';
 requires 'Catalyst::Runtime', '5.90000';
 
