@@ -276,6 +276,21 @@ sub _invalid_metadata ( $self, $desc ) {
     );
 }
 
+sub metadata_document ( $self ) {
+    my %doc = (
+        issuer                                => $self->issuer,
+        authorization_endpoint                => $self->authorize_endpoint,
+        token_endpoint                        => $self->token_endpoint,
+        registration_endpoint                 => $self->registration_endpoint,
+        response_types_supported              => ['code'],
+        grant_types_supported                 => [ 'authorization_code', 'refresh_token' ],
+        code_challenge_methods_supported      => ['S256'],
+        token_endpoint_auth_methods_supported => ['none'],
+    );
+    $doc{scopes_supported} = $self->scopes_supported if $self->scopes_supported;
+    return \%doc;
+}
+
 sub register_client ( $self, $metadata ) {
     my $uris = $metadata->{redirect_uris};
     $self->_invalid_metadata('redirect_uris is required')
