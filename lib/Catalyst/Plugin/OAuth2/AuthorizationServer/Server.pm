@@ -5,6 +5,7 @@ use Carp ();
 use Crypt::JWT qw/encode_jwt/;
 use Bytes::Random::Secure qw/random_bytes/;
 use MIME::Base64 qw/encode_base64url/;
+use Digest::SHA qw/sha256 sha256_hex/;
 use JSON::MaybeXS ();
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Error;
 use namespace::clean;
@@ -176,6 +177,95 @@ sub issue_code ( $self, $subject, $request_id ) {
         redirect_uri => $req->{redirect_uri},
         state        => $req->{state},
     };
+}
+
+sub _grant_error ( $self, $desc ) {
+    Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
+        error             => 'invalid_grant',
+        error_description => $desc,
+        http_status       => 400,
+    );
+}
+
+sub _pkce_s256 ( $self, $verifier ) {
+    return encode_base64url( sha256($verifier) );
+}
+
+# Constant-time string equality, so the PKCE challenge comparison does not
+# leak a byte-prefix match via short-circuit timing.
+sub _ct_eq ( $self, $a, $b ) {
+    return 0 unless length($a) == length($b);
+    my $d = 0;
+    $d |= ord( substr $a, $_, 1 ) ^ ord( substr $b, $_, 1 )
+        for 0 .. length($a) - 1;
+    return $d == 0;
+}
+
+sub _hash_token ( $self, $raw ) { return sha256_hex($raw) }
+
+# Mint an access + refresh pair from a binding ({ subject, scope, ... }).
+sub _issue_token_pair ( $self, $binding ) {
+    my $access = $self->mint_access_token(
+        { sub => $binding->{subject}, scope => $binding->{scope} },
+        $binding->{resource},
+    );
+    my $refresh = $self->_random_token(32);
+    $self->store->create_refresh_token(
+        $self->_hash_token($refresh),
+        {
+            client_id => $binding->{client_id},
+            subject   => $binding->{subject},
+            scope     => $binding->{scope},
+            resource  => $binding->{resource},
+        },
+        $self->_now + $self->refresh_ttl,
+    );
+    return {
+        access_token  => $access,
+        token_type    => 'Bearer',
+        expires_in    => $self->access_ttl,
+        refresh_token => $refresh,
+        scope         => $binding->{scope},
+    };
+}
+
+sub exchange_authorization_code ( $self, $params ) {
+    my $code = $params->{code};
+    $self->_grant_error('code is required')
+        unless defined $code && length $code;
+
+    my $binding = $self->store->consume_auth_code($code);
+    $self->_grant_error('unknown or used authorization code') unless $binding;
+
+    # When the request identifies its client, it must match the code's bound
+    # client (RFC 6749 §4.1.3 defence-in-depth on top of PKCE).
+    if ( defined $params->{client_id} && length $params->{client_id} ) {
+        $self->_grant_error('client_id mismatch')
+            unless $params->{client_id} eq $binding->{client_id};
+    }
+
+    $self->_grant_error('redirect_uri mismatch')
+        unless ( $params->{redirect_uri} // '' ) eq $binding->{redirect_uri};
+
+    my $verifier = $params->{code_verifier};
+    $self->_grant_error('code_verifier required')
+        unless defined $verifier && length $verifier;
+    $self->_grant_error('PKCE verification failed')
+        unless $self->_ct_eq( $self->_pkce_s256($verifier),
+        $binding->{code_challenge} );
+
+    return $self->_issue_token_pair($binding);
+}
+
+sub refresh ( $self, $params ) {
+    my $raw = $params->{refresh_token};
+    $self->_grant_error('refresh_token is required')
+        unless defined $raw && length $raw;
+
+    my $binding = $self->store->rotate_refresh_token( $self->_hash_token($raw) );
+    $self->_grant_error('unknown or revoked refresh token') unless $binding;
+
+    return $self->_issue_token_pair($binding);
 }
 
 sub _invalid_metadata ( $self, $desc ) {

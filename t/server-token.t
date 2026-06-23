@@ -1,0 +1,165 @@
+use v5.36;
+use Test::More;
+use Test::Fatal;
+use lib 't/lib';
+use StubStore;
+use Digest::SHA qw/sha256/;
+use MIME::Base64 qw/encode_base64url/;
+use Crypt::JWT qw/decode_jwt/;
+
+my $class = 'Catalyst::Plugin::OAuth2::AuthorizationServer::Server';
+require_ok($class);
+
+my $key = 'k' x 32;
+sub fresh_engine { return $class->new(
+    store => StubStore->new, signing_key => $key,
+    issuer => 'https://as', resource => 'https://rs/mcp',
+) }
+
+# helper: drive authorize -> issue_code with a real PKCE pair
+sub mint_code ( $eng, $verifier ) {
+    my $challenge = encode_base64url( sha256($verifier) );
+    $eng->store->create_client({
+        client_id => 'c1', redirect_uris => ['https://app/cb'] });
+    my $rid = $eng->validate_authorize({
+        client_id => 'c1', redirect_uri => 'https://app/cb',
+        response_type => 'code', code_challenge => $challenge,
+        code_challenge_method => 'S256', scope => 'gobby:read',
+        resource => 'https://rs/mcp',
+    })->{request_id};
+    return $eng->issue_code( 'user-9', $rid )->{code};
+}
+
+# happy path: code -> Bearer token (claims) + refresh token
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'verifier-123' );
+    my $tok  = $eng->exchange_authorization_code({
+        grant_type   => 'authorization_code',
+        code         => $code,
+        redirect_uri => 'https://app/cb',
+        code_verifier => 'verifier-123',
+    });
+    is( $tok->{token_type}, 'Bearer', 'Bearer token_type' );
+    is( $tok->{expires_in}, 900,      'expires_in = access_ttl' );
+    is( $tok->{scope},      'gobby:read', 'scope echoed' );
+    ok( length $tok->{refresh_token}, 'refresh token issued' );
+
+    my $claims = decode_jwt( token => $tok->{access_token}, key => $key );
+    is( $claims->{sub},   'user-9',          'sub claim' );
+    is( $claims->{aud},   'https://rs/mcp',  'aud = resource' );
+    is( $claims->{scope}, 'gobby:read',      'scope claim' );
+}
+
+# PKCE mismatch -> invalid_grant
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'right-verifier' );
+    my $e = exception { $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb',
+        code_verifier => 'WRONG',
+    }) };
+    is( $e->error, 'invalid_grant', 'PKCE mismatch rejected' );
+}
+
+# replayed code -> invalid_grant (single-use)
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'v' );
+    $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb', code_verifier => 'v' });
+    my $e = exception { $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb', code_verifier => 'v' }) };
+    is( $e->error, 'invalid_grant', 'code replay rejected' );
+}
+
+# redirect_uri mismatch -> invalid_grant
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'v' );
+    my $e = exception { $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://evil/cb', code_verifier => 'v' }) };
+    is( $e->error, 'invalid_grant', 'redirect mismatch rejected' );
+}
+
+# refresh rotation: new pair issued, old refresh token revoked
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'v' );
+    my $first = $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb', code_verifier => 'v' });
+    my $rt = $first->{refresh_token};
+
+    my $second = $eng->refresh({
+        grant_type => 'refresh_token', refresh_token => $rt });
+    ok( length $second->{access_token}, 'refresh yields a new access token' );
+    isnt( $second->{refresh_token}, $rt, 'refresh token rotated' );
+
+    my $e = exception { $eng->refresh({ refresh_token => $rt }) };
+    is( $e->error, 'invalid_grant', 'reused refresh token rejected' );
+}
+
+# access-token aud is restricted to the AUTHORIZED resource, not all configured
+{
+    my $eng = $class->new(
+        store => StubStore->new, signing_key => $key,
+        issuer => 'https://as', resource => [ 'https://rs/mcp', 'https://rs/other' ],
+    );
+    $eng->store->create_client({ client_id => 'c1', redirect_uris => ['https://app/cb'] });
+    my $challenge = encode_base64url( sha256('v') );
+    my $rid = $eng->validate_authorize({
+        client_id => 'c1', redirect_uri => 'https://app/cb', response_type => 'code',
+        code_challenge => $challenge, code_challenge_method => 'S256',
+        scope => 'gobby:read', resource => 'https://rs/mcp',
+    })->{request_id};
+    my $code = $eng->issue_code( 'user-9', $rid )->{code};
+    my $tok = $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb', code_verifier => 'v' });
+    my $claims = decode_jwt( token => $tok->{access_token}, key => $key );
+    is( $claims->{aud}, 'https://rs/mcp',
+        'aud restricted to the authorized resource, not all configured' );
+}
+
+# token request with a mismatched client_id -> invalid_grant
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'v' );
+    my $e = exception { $eng->exchange_authorization_code({
+        client_id => 'someone-else', code => $code,
+        redirect_uri => 'https://app/cb', code_verifier => 'v' }) };
+    is( $e->error, 'invalid_grant', 'client_id mismatch rejected' );
+}
+
+# expired authorization code -> invalid_grant (engine honours the Store's expiry)
+{
+    my $eng = fresh_engine();
+    $eng->store->create_auth_code( 'old-code',
+        { client_id => 'c1', subject => 'u', redirect_uri => 'https://app/cb',
+          code_challenge => 'x', scope => 'gobby:read', resource => 'https://rs/mcp' },
+        time - 1 );
+    my $e = exception { $eng->exchange_authorization_code({
+        code => 'old-code', redirect_uri => 'https://app/cb', code_verifier => 'x' }) };
+    is( $e->error, 'invalid_grant', 'expired code rejected' );
+}
+
+# expired refresh token -> invalid_grant
+{
+    my $eng = fresh_engine();
+    $eng->store->create_refresh_token( $eng->_hash_token('raw-rt'),
+        { client_id => 'c1', subject => 'u', scope => 'gobby:read',
+          resource => 'https://rs/mcp' },
+        time - 1 );
+    my $e = exception { $eng->refresh({ refresh_token => 'raw-rt' }) };
+    is( $e->error, 'invalid_grant', 'expired refresh token rejected' );
+}
+
+# missing code_verifier -> invalid_grant
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'v' );
+    my $e = exception { $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb' }) };
+    is( $e->error, 'invalid_grant', 'absent code_verifier rejected' );
+}
+
+done_testing;
