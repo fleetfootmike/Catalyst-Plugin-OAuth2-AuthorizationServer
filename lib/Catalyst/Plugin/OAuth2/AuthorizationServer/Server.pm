@@ -151,6 +151,33 @@ sub validate_authorize ( $self, $params ) {
     return { request_id => $rid };
 }
 
+sub issue_code ( $self, $subject, $request_id ) {
+    my $req = $self->store->take_authorization_request( $request_id );
+    Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
+        error             => 'invalid_request',
+        error_description => 'unknown or expired authorization request',
+        http_status       => 400,
+    ) unless $req;
+
+    my $code    = $self->_random_token(32);
+    my $binding = {
+        client_id      => $req->{client_id},
+        subject        => $subject,
+        redirect_uri   => $req->{redirect_uri},
+        code_challenge => $req->{code_challenge},
+        scope          => $req->{scope},
+        resource       => $req->{resource},
+    };
+    $self->store->create_auth_code(
+        $code, $binding, $self->_now + $self->code_ttl );
+
+    return {
+        code         => $code,
+        redirect_uri => $req->{redirect_uri},
+        state        => $req->{state},
+    };
+}
+
 sub _invalid_metadata ( $self, $desc ) {
     Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
         error             => 'invalid_client_metadata',
