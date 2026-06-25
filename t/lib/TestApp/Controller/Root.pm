@@ -27,4 +27,11 @@ sub token :Path('/oauth/token') :Args(0) {
     $c->oauth_token;
 }
 
+sub issue_code_direct :Path('/test/issue-code') :Args(0) {
+    my ( $self, $c ) = @_;
+    my $out = $c->oauth_issue_code( 'user-x',
+        $c->request->query_parameters->{request_id} // 'nope' );
+    $c->response->body('OK') if $out;
+}
+
 1;

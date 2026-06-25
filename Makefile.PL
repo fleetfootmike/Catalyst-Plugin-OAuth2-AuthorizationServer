@@ -10,6 +10,7 @@ WriteMakefile(
     MIN_PERL_VERSION => '5.036',
     PREREQ_PM => {
         'Moo'                  => 0,
+        'MooX::StrictConstructor' => 0,
         'Moo::Role'            => 0,
         'namespace::clean'     => 0,
         'Scalar::Util'         => 0,

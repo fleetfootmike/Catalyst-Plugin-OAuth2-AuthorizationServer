@@ -67,4 +67,28 @@ sub engine (%over) {
     is( $e->error, 'invalid_client_metadata', 'oversize metadata rejected' );
 }
 
+# javascript: / non-https redirect_uri rejected
+{
+    my $e = exception {
+        engine->register_client({ redirect_uris => ['javascript:alert(1)'] });
+    };
+    is( $e->error, 'invalid_client_metadata', 'javascript: redirect rejected' );
+}
+# plain http (non-loopback) rejected; loopback http allowed
+{
+    my $e = exception {
+        engine->register_client({ redirect_uris => ['http://evil.example/cb'] });
+    };
+    is( $e->error, 'invalid_client_metadata', 'non-loopback http rejected' );
+    my $ok = engine->register_client({ redirect_uris => ['http://127.0.0.1/cb'] });
+    like( $ok->{client_id}, qr/\A[A-Za-z0-9_-]+\z/, 'loopback http allowed' );
+}
+# fragment rejected
+{
+    my $e = exception {
+        engine->register_client({ redirect_uris => ['https://app/cb#frag'] });
+    };
+    is( $e->error, 'invalid_client_metadata', 'redirect_uri with fragment rejected' );
+}
+
 done_testing;

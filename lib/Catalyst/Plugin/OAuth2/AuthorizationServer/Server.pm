@@ -7,8 +7,10 @@ use Bytes::Random::Secure qw/random_bytes/;
 use MIME::Base64 qw/encode_base64url/;
 use Digest::SHA qw/sha256 sha256_hex/;
 use JSON::MaybeXS ();
+use URI ();
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Error;
 use namespace::clean;
+use MooX::StrictConstructor;
 
 our $VERSION = '0.001';
 
@@ -43,6 +45,9 @@ sub BUILD ( $self, $args ) {
         Carp::croak "$ttl must be a positive integer"
             if !$v || $v <= 0;
     }
+    state %ALLOWED_ALG = map { $_ => 1 } qw/HS256 HS384 HS512/;
+    Carp::croak 'jwt_alg must be one of HS256, HS384, HS512'
+        unless $ALLOWED_ALG{ $self->jwt_alg };
 }
 
 # resource may be a scalar or arrayref; normalise to a list.
@@ -122,12 +127,16 @@ sub validate_authorize ( $self, $params ) {
         unless defined $challenge && length $challenge;
     $self->_authz_error( 'invalid_request', 'code_challenge_method must be S256', %rd )
         unless ( $params->{code_challenge_method} // '' ) eq 'S256';
+    $self->_authz_error( 'invalid_request',
+        'code_challenge must be 43-character base64url (S256)', %rd )
+        unless $challenge =~ m{\A[A-Za-z0-9_-]{43}\z};
 
     my $scope = $params->{scope};
     if ( defined $scope && length $scope && $self->scopes_supported ) {
         my %ok = map { $_ => 1 } @{ $self->scopes_supported };
-        for my $s ( split /\s+/, $scope ) {
-            $self->_authz_error( 'invalid_scope', "unsupported scope: $s", %rd )
+        for my $s ( split ' ', $scope ) {
+            $self->_authz_error( 'invalid_scope',
+                'one or more requested scopes are not supported', %rd )
                 unless $ok{$s};
         }
     }
@@ -207,7 +216,10 @@ sub _hash_token ( $self, $raw ) { return sha256_hex($raw) }
 # Mint an access + refresh pair from a binding ({ subject, scope, ... }).
 sub _issue_token_pair ( $self, $binding ) {
     my $access = $self->mint_access_token(
-        { sub => $binding->{subject}, scope => $binding->{scope} },
+        {
+            sub => $binding->{subject},
+            ( defined $binding->{scope} ? ( scope => $binding->{scope} ) : () ),
+        },
         $binding->{resource},
     );
     my $refresh = $self->_random_token(32);
@@ -226,7 +238,7 @@ sub _issue_token_pair ( $self, $binding ) {
         token_type    => 'Bearer',
         expires_in    => $self->access_ttl,
         refresh_token => $refresh,
-        scope         => $binding->{scope},
+        ( defined $binding->{scope} ? ( scope => $binding->{scope} ) : () ),
     };
 }
 
@@ -266,6 +278,12 @@ sub refresh ( $self, $params ) {
     my $binding = $self->store->rotate_refresh_token( $self->_hash_token($raw) );
     $self->_grant_error('unknown or revoked refresh token') unless $binding;
 
+    # Mirror the code-exchange client binding check (RFC 6749 §6).
+    if ( defined $params->{client_id} && length $params->{client_id} ) {
+        $self->_grant_error('client_id mismatch')
+            unless $params->{client_id} eq $binding->{client_id};
+    }
+
     return $self->_issue_token_pair($binding);
 }
 
@@ -303,6 +321,20 @@ sub register_client ( $self, $metadata ) {
             if ref $u || !defined $u || !length $u;
         $self->_invalid_metadata('redirect_uri too long')
             if length $u > $self->redirect_uri_max_length;
+
+        my $parsed = URI->new($u);
+        my $scheme = lc( $parsed->scheme // '' );
+        my $ok_scheme =
+              $scheme eq 'https' ? 1
+            : $scheme eq 'http'
+                && $parsed->can('host')
+                && ( $parsed->host // '' )
+                    =~ m{\A(?:localhost|127\.\d+\.\d+\.\d+|::1)\z} ? 1
+            : 0;
+        $self->_invalid_metadata('redirect_uri scheme not allowed')
+            unless $ok_scheme;
+        $self->_invalid_metadata('redirect_uri must not contain a fragment')
+            if $parsed->can('fragment') && defined $parsed->fragment;
     }
 
     my $json = JSON::MaybeXS->new( utf8 => 1, canonical => 1 );
@@ -312,5 +344,63 @@ sub register_client ( $self, $metadata ) {
     my $client = { %$metadata, client_id => $self->_random_token(16) };
     return $self->store->create_client($client);
 }
+
+=head1 NAME
+
+Catalyst::Plugin::OAuth2::AuthorizationServer::Server - Pure-logic OAuth 2.1
+Authorization Server engine
+
+=head1 DESCRIPTION
+
+The pure-logic OAuth 2.1 engine behind the Catalyst seam. Holds the Store
+reference, the signing key, and configuration; is otherwise stateless (the
+only mutable state lives in the injected Store).
+
+=head1 METHODS
+
+=head2 mint_access_token( \%claims, $aud )
+
+Mint a signed JWT access token. The engine stamps C<iss>, C<aud>, C<iat>,
+C<exp>. C<$aud> defaults to the configured C<resource> list. Returns the
+encoded JWT string.
+
+=head2 register_client( \%metadata )
+
+Dynamic Client Registration (RFC 7591). Validates C<redirect_uris> (must be
+present; each must be HTTPS or loopback HTTP; no fragments; within length
+limits). Generates a C<client_id>, calls C<Store::create_client>, and returns
+the stored client hashref.
+
+=head2 validate_authorize( \%params )
+
+Validate an authorization request (RFC 6749 §4.1.1 + PKCE RFC 7636). Checks
+client, redirect_uri, response_type, code_challenge (must be a 43-character
+base64url string), code_challenge_method (must be C<S256>), scope, and
+resource. On success, stashes the request via
+C<Store::save_authorization_request> and returns C<{ request_id }>.
+
+=head2 issue_code( $subject, $request_id )
+
+Atomically consume the stashed authorization request and mint a single-use
+authorization code bound to C<$subject>. Returns C<{ code, redirect_uri,
+state }>. Throws C<invalid_request> if the request is unknown or expired.
+
+=head2 exchange_authorization_code( \%params )
+
+Authorization-code grant (RFC 6749 §4.1.3). Validates code, redirect_uri,
+client_id binding, and PKCE verifier. Returns C<{ access_token, token_type,
+expires_in, refresh_token }> (plus C<scope> if the request carried one).
+
+=head2 refresh( \%params )
+
+Refresh-token grant (RFC 6749 §6). Rotates the refresh token via
+C<Store::rotate_refresh_token> and mints a new access + refresh pair.
+Optionally validates a C<client_id> parameter against the binding.
+
+=head2 metadata_document
+
+Return the RFC 8414 Authorization Server Metadata hashref.
+
+=cut
 
 1;

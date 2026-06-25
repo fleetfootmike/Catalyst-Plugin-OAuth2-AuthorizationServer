@@ -89,4 +89,22 @@ for ( 1 .. 100 ) {
     ok( !$seen{$t}++, 'token unique' );
 }
 
+like(
+    exception {
+        $class->new( store => T::Store->new, signing_key => $key,
+            issuer => 'i', resource => 'r', jwt_alg => 'RS256' );
+    },
+    qr/jwt_alg/,
+    'non-HS jwt_alg rejected'
+);
+
+like(
+    exception {
+        $class->new( store => T::Store->new, signing_key => $key,
+            issuer => 'i', resource => 'r', bogus_unknown_key => 1 );
+    },
+    qr/bogus_unknown_key|StrictConstructor|not.*(allowed|listed)/i,
+    'unknown config key croaks (StrictConstructor)'
+);
+
 done_testing;

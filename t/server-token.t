@@ -162,4 +162,33 @@ sub mint_code ( $eng, $verifier ) {
     is( $e->error, 'invalid_grant', 'absent code_verifier rejected' );
 }
 
+# refresh with a mismatched client_id -> invalid_grant
+{
+    my $eng  = fresh_engine();
+    my $code = mint_code( $eng, 'v' );
+    my $first = $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb', code_verifier => 'v' });
+    my $e = exception { $eng->refresh({
+        refresh_token => $first->{refresh_token}, client_id => 'someone-else' }) };
+    is( $e->error, 'invalid_grant', 'refresh client_id mismatch rejected' );
+}
+
+# no scope requested -> token response omits scope, JWT has no scope claim
+{
+    my $eng = fresh_engine();
+    $eng->store->create_client({ client_id => 'c1', redirect_uris => ['https://app/cb'] });
+    my $challenge = encode_base64url( sha256('v') );
+    my $rid = $eng->validate_authorize({
+        client_id => 'c1', redirect_uri => 'https://app/cb', response_type => 'code',
+        code_challenge => $challenge, code_challenge_method => 'S256',
+        resource => 'https://rs/mcp',   # no scope
+    })->{request_id};
+    my $code = $eng->issue_code( 'u', $rid )->{code};
+    my $tok  = $eng->exchange_authorization_code({
+        code => $code, redirect_uri => 'https://app/cb', code_verifier => 'v' });
+    ok( !exists $tok->{scope}, 'token response omits scope when none requested' );
+    my $claims = decode_jwt( token => $tok->{access_token}, key => $key );
+    ok( !exists $claims->{scope}, 'JWT omits scope claim when none requested' );
+}
+
 done_testing;

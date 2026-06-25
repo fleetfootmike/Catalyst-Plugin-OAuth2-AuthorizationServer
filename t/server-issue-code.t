@@ -19,7 +19,9 @@ my $eng = $class->new(
 # stash a request, then issue a code against it
 my $rid = $eng->validate_authorize({
     client_id => 'client-1', redirect_uri => 'https://app/cb',
-    response_type => 'code', code_challenge => 'chal', code_challenge_method => 'S256',
+    response_type => 'code',
+    code_challenge => 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+    code_challenge_method => 'S256',
     scope => 'gobby:read', resource => 'https://rs/mcp', state => 'st',
 })->{request_id};
 
@@ -33,7 +35,7 @@ my $binding = $store->consume_auth_code( $out->{code} );
 is( $binding->{subject},        'user-7',         'bound to subject' );
 is( $binding->{client_id},      'client-1',       'bound client' );
 is( $binding->{redirect_uri},   'https://app/cb', 'bound redirect' );
-is( $binding->{code_challenge}, 'chal',           'bound challenge' );
+is( $binding->{code_challenge}, 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'bound challenge' );
 is( $binding->{scope},          'gobby:read',     'bound scope' );
 is( $binding->{resource},       'https://rs/mcp', 'bound resource' );
 

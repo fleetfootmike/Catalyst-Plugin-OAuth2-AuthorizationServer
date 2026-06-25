@@ -24,6 +24,7 @@ __PACKAGE__->config(
 # user-1 and immediately mint + redirect with the code.
 sub oauth_authenticate ( $c, $request_id ) {
     my $out = $c->oauth_issue_code( 'user-1', $request_id );
+    return unless $out;
     my $uri = URI->new( $out->{redirect_uri} );
     $uri->query_form( code => $out->{code},
         ( defined $out->{state} ? ( state => $out->{state} ) : () ) );

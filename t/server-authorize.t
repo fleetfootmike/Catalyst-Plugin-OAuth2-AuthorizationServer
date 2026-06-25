@@ -28,7 +28,7 @@ sub good_params (%over) {
         client_id             => 'client-1',
         redirect_uri          => 'https://app.example/cb',
         response_type         => 'code',
-        code_challenge        => 'abc123',
+        code_challenge        => 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
         code_challenge_method => 'S256',
         scope                 => 'gobby:read',
         resource              => 'https://rs.example/mcp',
@@ -45,7 +45,7 @@ sub good_params (%over) {
     my $saved = $store->take_authorization_request( $out->{request_id} );
     is( $saved->{client_id},    'client-1',                'saved client_id' );
     is( $saved->{redirect_uri}, 'https://app.example/cb',  'saved redirect_uri' );
-    is( $saved->{code_challenge}, 'abc123',                'saved challenge' );
+    is( $saved->{code_challenge}, 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'saved challenge' );
     is( $saved->{scope},        'gobby:read',              'saved scope' );
     is( $saved->{resource},     'https://rs.example/mcp',  'saved resource' );
     is( $saved->{state},        'xyz',                     'saved state' );
@@ -53,13 +53,14 @@ sub good_params (%over) {
 
 # third element: is this error redirect-safe? (client + redirect already valid)
 my %cases = (
-    unknown_client => [ { client_id => 'nope' }, 'invalid_client', 0 ],
-    bad_redirect   => [ { redirect_uri => 'https://evil/cb' }, 'invalid_client', 0 ],
-    not_code       => [ { response_type => 'token' }, 'invalid_request', 1 ],
-    no_challenge   => [ { code_challenge => undef }, 'invalid_request', 1 ],
-    plain_method   => [ { code_challenge_method => 'plain' }, 'invalid_request', 1 ],
-    bad_scope      => [ { scope => 'gobby:read admin:all' }, 'invalid_scope', 1 ],
-    bad_resource   => [ { resource => 'https://other/api' }, 'invalid_target', 1 ],
+    unknown_client  => [ { client_id => 'nope' }, 'invalid_client', 0 ],
+    bad_redirect    => [ { redirect_uri => 'https://evil/cb' }, 'invalid_client', 0 ],
+    not_code        => [ { response_type => 'token' }, 'invalid_request', 1 ],
+    no_challenge    => [ { code_challenge => undef }, 'invalid_request', 1 ],
+    plain_method    => [ { code_challenge_method => 'plain' }, 'invalid_request', 1 ],
+    short_challenge => [ { code_challenge => 'abc' }, 'invalid_request', 1 ],
+    bad_scope       => [ { scope => 'gobby:read admin:all' }, 'invalid_scope', 1 ],
+    bad_resource    => [ { resource => 'https://other/api' }, 'invalid_target', 1 ],
 );
 for my $name ( sort keys %cases ) {
     my ( $over, $want, $redirectable ) = @{ $cases{$name} };

@@ -45,7 +45,8 @@ an absolute C<$expires_at>. Return true.
 =head2 take_authorization_request( $request_id )
 
 Atomically fetch-and-delete (single-use) the saved request. Return the
-C<\%data> hashref, or undef if missing or expired.
+C<\%data> hashref, or undef if missing or expired. The atomic fetch-and-delete
+requirement prevents authorization-request replay.
 
 =head2 create_auth_code( $code, \%binding, $expires_at )
 
@@ -56,7 +57,8 @@ true.
 =head2 consume_auth_code( $code )
 
 Atomically fetch-and-delete the code's binding (single-use). Return the
-C<\%binding>, or undef if unknown/expired/already used.
+C<\%binding>, or undef if unknown/expired/already used. The same atomic
+fetch-and-delete requirement prevents authorization-code replay.
 
 =head2 create_refresh_token( $token_hash, \%binding, $expires_at )
 
@@ -68,6 +70,12 @@ C<client_id>, C<subject>, C<scope>, C<resource>. Return true.
 Atomically validate-and-revoke the refresh token identified by C<$token_hash>,
 returning its C<\%binding> (so the engine can mint a fresh pair), or undef if
 unknown/expired/already revoked.
+
+B<Concurrency note:> a non-atomic implementation enables refresh-token replay
+under concurrent requests. The engine calls C<create_refresh_token> immediately
+after C<rotate_refresh_token> with no transactional envelope — a crash between
+the two calls will invalidate the session. Wrap both operations in a
+transaction if the backend supports it.
 
 =head2 revoke_refresh_tokens_for_subject( $subject )
 

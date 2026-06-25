@@ -44,6 +44,18 @@ sub _oauth_json_body ( $c ) {
     return $data;
 }
 
+# Catalyst delivers a repeated query/body parameter as an arrayref. Flatten to
+# the last scalar value so a duplicated security-sensitive field cannot become
+# an arrayref that misclassifies or stringifies into a response.
+sub _oauth_params ( $c, $params ) {
+    my %out;
+    for my $k ( keys %$params ) {
+        my $v = $params->{$k};
+        $out{$k} = ref $v eq 'ARRAY' ? $v->[-1] : $v;
+    }
+    return \%out;
+}
+
 sub oauth_error ( $c, $error, $status = 400, $desc = undef ) {
     my %body = ( error => $error );
     $body{error_description} = $desc if defined $desc;
@@ -103,8 +115,8 @@ sub oauth_register ( $c ) {
 
 sub oauth_authorize ( $c ) {
     return try {
-        my %params = %{ $c->request->query_parameters };
-        my $out    = $c->_oauth_engine->validate_authorize( \%params );
+        my $params = $c->_oauth_params( $c->request->query_parameters );
+        my $out    = $c->_oauth_engine->validate_authorize($params);
         # Hand off to the app's authn/consent hook with the opaque request_id.
         return $c->oauth_authenticate( $out->{request_id} );
     }
@@ -130,22 +142,36 @@ sub oauth_authorize ( $c ) {
     };
 }
 
-# Called BY the app once the user has consented.
+# Called BY the app once the user has consented. On success returns
+# { code, redirect_uri, state }. On a handled error (unknown/expired/replayed
+# request) it renders the OAuth error envelope and returns undef, so callers
+# must check: my $out = $c->oauth_issue_code(...); return unless $out;
 sub oauth_issue_code ( $c, $subject, $request_id ) {
-    return $c->_oauth_engine->issue_code( $subject, $request_id );
+    return try {
+        $c->_oauth_engine->issue_code( $subject, $request_id );
+    }
+    catch {
+        $c->_oauth_render_error($_);
+        undef;
+    };
 }
 
 sub oauth_token ( $c ) {
     return try {
-        my %p   = %{ $c->request->body_parameters };
-        my $gt  = $p{grant_type} // '';
+        my $p   = $c->_oauth_params( $c->request->body_parameters );
         my $eng = $c->_oauth_engine;
+        my $gt  = $p->{grant_type};
+        Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
+            error => 'invalid_request',
+            error_description => 'grant_type is required',
+            http_status => 400,
+        ) unless defined $gt && length $gt;
         my $tok =
-              $gt eq 'authorization_code' ? $eng->exchange_authorization_code( \%p )
-            : $gt eq 'refresh_token'      ? $eng->refresh( \%p )
+              $gt eq 'authorization_code' ? $eng->exchange_authorization_code($p)
+            : $gt eq 'refresh_token'      ? $eng->refresh($p)
             : Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
                 error => 'unsupported_grant_type',
-                error_description => "unsupported grant_type: $gt",
+                error_description => 'unsupported grant_type',
                 http_status => 400 );
         my $res = $c->response;
         $res->status(200);
@@ -221,7 +247,10 @@ Otherwise renders a JSON error envelope directly.
 =head2 oauth_issue_code( $subject, $request_id )
 
 Called BY the app (typically inside C<oauth_authenticate>) once the user has
-consented. Returns C<{ code, redirect_uri, state }>.
+consented. Returns C<{ code, redirect_uri, state }> on success, or C<undef>
+if the request_id is unknown/expired (in which case the OAuth error envelope
+has already been rendered). Callers must check the return value:
+C<< my $out = $c->oauth_issue_code(...); return unless $out; >>
 
 =head2 oauth_token
 
@@ -248,6 +277,18 @@ returned C<redirect_uri> carrying the C<code> (and C<state>).
 
 If present and returns false, C<oauth_register> responds 429
 C<too_many_requests>. Use for rate-limiting DCR.
+
+=head1 LIMITATIONS
+
+Refresh-token rotation revokes the presented token but does not revoke the
+whole token family on a detected reuse; family revocation on reuse is a planned
+enhancement. Apps can call C<revoke_refresh_tokens_for_subject> on
+logout/deactivation.
+
+Garbage-collecting abandoned Dynamic Client Registrations (clients that never
+completed a token exchange) is the host application's responsibility: the Store
+has the visibility to identify and remove them. This plugin tracks no client
+usage.
 
 =cut
 

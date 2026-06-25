@@ -1,5 +1,6 @@
 requires 'perl', '5.036';
 requires 'Moo';
+requires 'MooX::StrictConstructor';
 requires 'Moo::Role';
 requires 'namespace::clean';
 requires 'Scalar::Util';

@@ -123,4 +123,20 @@ my $refresh;
         'invalid_client body' );
 }
 
+# oauth_issue_code with a bogus request_id renders a clean 400, not a 500
+{
+    my $res = request( GET '/test/issue-code?request_id=does-not-exist' );
+    is( $res->code, 400, 'expired/unknown request_id -> 400 (not 500)' );
+    is( decode_json( $res->content )->{error}, 'invalid_request',
+        'invalid_request envelope, no backtrace leak' );
+}
+
+# missing grant_type -> invalid_request (not unsupported_grant_type)
+{
+    my $res = request( POST '/oauth/token', [ code => 'x' ] );
+    is( $res->code, 400, 'missing grant_type -> 400' );
+    is( decode_json( $res->content )->{error}, 'invalid_request',
+        'missing grant_type is invalid_request' );
+}
+
 done_testing;
