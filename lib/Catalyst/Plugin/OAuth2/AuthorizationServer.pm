@@ -290,6 +290,14 @@ completed a token exchange) is the host application's responsibility: the Store
 has the visibility to identify and remove them. This plugin tracks no client
 usage.
 
+=head1 EXAMPLES
+
+A runnable example lives in F<examples/>: a small Catalyst app exposing the
+metadata, dynamic client registration, authorize, and token endpoints backed
+by an in-memory store, plus a core-Perl client that drives the full
+authorization-code + PKCE flow. Start it with C<plackup examples/app.psgi>
+and run C<perl examples/client.pl>. See F<examples/README.md>.
+
 =cut
 
 1;

@@ -1,6 +1,12 @@
 .perlcriticrc
 Changes
 cpanfile
+examples/app.psgi
+examples/client.pl
+examples/lib/Example/OAuthAS.pm
+examples/lib/Example/OAuthAS/Controller/Root.pm
+examples/lib/Example/OAuthAS/Model/Store.pm
+examples/README.md
 lib/Catalyst/Plugin/OAuth2/AuthorizationServer.pm
 lib/Catalyst/Plugin/OAuth2/AuthorizationServer/Error.pm
 lib/Catalyst/Plugin/OAuth2/AuthorizationServer/Role/Store.pm
