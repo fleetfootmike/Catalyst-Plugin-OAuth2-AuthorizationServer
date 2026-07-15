@@ -17,7 +17,7 @@ package T::Store { use Moo;
 }
 package main;
 
-my $key = 'test-signing-key-0123456789';
+my $key = 'test-signing-key-0123456789abcdef';
 my $eng = $class->new(
     store       => T::Store->new,
     signing_key => $key,
@@ -105,6 +105,40 @@ like(
     },
     qr/bogus_unknown_key|StrictConstructor|not.*(allowed|listed)/i,
     'unknown config key croaks (StrictConstructor)'
+);
+
+# RFC 7518 3.2: an HS key must be at least as long as the hash output, or the
+# signature is brute-forceable. Mirrors the ResourceServer guard.
+my %min_key_bytes = ( HS256 => 32, HS384 => 48, HS512 => 64 );
+for my $alg ( sort keys %min_key_bytes ) {
+    my $min = $min_key_bytes{$alg};
+    like(
+        exception {
+            $class->new( store => T::Store->new,
+                signing_key => 'x' x ( $min - 1 ),
+                issuer => 'i', resource => 'r', jwt_alg => $alg );
+        },
+        qr/\Qsigning_key must be at least $min bytes for $alg\E/,
+        "$alg signing_key of $min-1 bytes rejected"
+    );
+    is(
+        exception {
+            $class->new( store => T::Store->new, signing_key => 'x' x $min,
+                issuer => 'i', resource => 'r', jwt_alg => $alg );
+        },
+        undef,
+        "$alg signing_key of exactly $min bytes accepted"
+    );
+}
+
+# an invalid jwt_alg is reported as such, not as an undef key minimum
+like(
+    exception {
+        $class->new( store => T::Store->new, signing_key => 'x',
+            issuer => 'i', resource => 'r', jwt_alg => 'none' );
+    },
+    qr/jwt_alg/,
+    'alg allowlist runs before the key-length lookup'
 );
 
 done_testing;

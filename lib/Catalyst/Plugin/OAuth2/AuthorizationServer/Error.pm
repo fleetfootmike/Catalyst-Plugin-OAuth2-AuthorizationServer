@@ -30,8 +30,8 @@ Catalyst::Plugin::OAuth2::AuthorizationServer::Error - a structured OAuth error
 
 Thrown by the engine and the plugin to signal an OAuth error. Attributes:
 C<error> (required, the RFC error code string), C<error_description>
-(optional), C<state> and C<redirect_uri> (optional — used by the authorize
-redirect-on-error path, RFC 6749 §4.1.2.1, not the JSON body), C<http_status>
+(optional), C<state> and C<redirect_uri> (optional, used by the authorize
+redirect-on-error path, RFC 6749 4.1.2.1, not the JSON body), C<http_status>
 (default 400). C<to_response> returns C<< (\%body, $status) >> for direct
 rendering; the body carries only C<error> + C<error_description>.
 

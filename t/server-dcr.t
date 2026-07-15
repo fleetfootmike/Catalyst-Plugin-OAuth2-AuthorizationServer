@@ -91,4 +91,132 @@ sub engine (%over) {
     is( $e->error, 'invalid_client_metadata', 'redirect_uri with fragment rejected' );
 }
 
+# --- RFC 7591 3.2.1: metadata values this AS does not advertise are rejected ---
+
+# token_endpoint_auth_method: metadata advertises 'none' only
+{
+    my $e = exception {
+        engine->register_client({
+            redirect_uris              => ['https://app.example/cb'],
+            token_endpoint_auth_method => 'client_secret_basic',
+        });
+    };
+    isa_ok( $e, 'Catalyst::Plugin::OAuth2::AuthorizationServer::Error',
+        'client_secret_basic registration' );
+    is( $e->error, 'invalid_client_metadata',
+        'unadvertised token_endpoint_auth_method rejected' );
+
+    my $ok = engine->register_client({
+        redirect_uris              => ['https://app.example/cb'],
+        token_endpoint_auth_method => 'none',
+    });
+    is( $ok->{token_endpoint_auth_method}, 'none',
+        'the advertised token_endpoint_auth_method is accepted' );
+}
+
+# grant_types: metadata advertises authorization_code + refresh_token
+{
+    my $e = exception {
+        engine->register_client({
+            redirect_uris => ['https://app.example/cb'],
+            grant_types   => [ 'authorization_code', 'client_credentials' ],
+        });
+    };
+    is( $e->error, 'invalid_client_metadata', 'unadvertised grant_type rejected' );
+
+    my $ok = engine->register_client({
+        redirect_uris => ['https://app.example/cb'],
+        grant_types   => [ 'authorization_code', 'refresh_token' ],
+    });
+    is_deeply( $ok->{grant_types}, [ 'authorization_code', 'refresh_token' ],
+        'advertised grant_types accepted' );
+}
+
+# response_types: metadata advertises 'code' only
+{
+    my $e = exception {
+        engine->register_client({
+            redirect_uris  => ['https://app.example/cb'],
+            response_types => ['token'],
+        });
+    };
+    is( $e->error, 'invalid_client_metadata', 'unadvertised response_type rejected' );
+
+    my $ok = engine->register_client({
+        redirect_uris  => ['https://app.example/cb'],
+        response_types => ['code'],
+    });
+    is_deeply( $ok->{response_types}, ['code'], 'advertised response_type accepted' );
+}
+
+# the list-valued fields must actually be lists of strings
+{
+    for my $bad ( 'authorization_code', [], [ {} ] ) {
+        my $e = exception {
+            engine->register_client({
+                redirect_uris => ['https://app.example/cb'],
+                grant_types   => $bad,
+            });
+        };
+        is( $e->error, 'invalid_client_metadata',
+            'grant_types must be a non-empty array of strings' );
+    }
+}
+
+# scope is only constrained when the AS advertises scopes_supported
+{
+    my $e = exception {
+        engine( scopes_supported => ['gobby:read'] )->register_client({
+            redirect_uris => ['https://app.example/cb'],
+            scope         => 'gobby:read admin:all',
+        });
+    };
+    is( $e->error, 'invalid_client_metadata', 'unadvertised scope rejected' );
+
+    my $ok = engine( scopes_supported => ['gobby:read'] )->register_client({
+        redirect_uris => ['https://app.example/cb'],
+        scope         => 'gobby:read',
+    });
+    is( $ok->{scope}, 'gobby:read', 'advertised scope accepted' );
+
+    my $free = engine->register_client({
+        redirect_uris => ['https://app.example/cb'],
+        scope         => 'anything the app likes',
+    });
+    is( $free->{scope}, 'anything the app likes',
+        'scope is free-form when the AS advertises no scopes_supported' );
+}
+
+# free-form RFC 7591 fields are not rejected merely for being present
+{
+    my $ok = engine->register_client({
+        redirect_uris => ['https://app.example/cb'],
+        client_name   => 'My App',
+        client_uri    => 'https://app.example',
+        logo_uri      => 'https://app.example/logo.png',
+        contacts      => ['dev@app.example'],
+        software_id   => 'abc-123',
+    });
+    is( $ok->{client_name}, 'My App',                     'client_name kept' );
+    is( $ok->{logo_uri},    'https://app.example/logo.png', 'logo_uri kept' );
+    is_deeply( $ok->{contacts}, ['dev@app.example'],      'contacts kept' );
+    is( $ok->{software_id}, 'abc-123', 'unknown extension field not rejected' );
+}
+
+# a fully-specified valid registration round-trips through the store
+{
+    my $eng = engine( scopes_supported => ['gobby:read'] );
+    my $client = $eng->register_client({
+        redirect_uris              => ['https://app.example/cb'],
+        token_endpoint_auth_method => 'none',
+        grant_types                => [ 'authorization_code', 'refresh_token' ],
+        response_types             => ['code'],
+        scope                      => 'gobby:read',
+        client_name                => 'Round Trip',
+    });
+    like( $client->{client_id}, qr/\A[A-Za-z0-9_-]+\z/, 'client_id minted' );
+    is_deeply( $eng->store->find_client( $client->{client_id} ), $client,
+        'full valid registration round-trips through the store' );
+}
+
 done_testing;

@@ -73,7 +73,7 @@ unknown/expired/already revoked.
 
 B<Concurrency note:> a non-atomic implementation enables refresh-token replay
 under concurrent requests. The engine calls C<create_refresh_token> immediately
-after C<rotate_refresh_token> with no transactional envelope — a crash between
+after C<rotate_refresh_token> with no transactional envelope: a crash between
 the two calls will invalidate the session. Wrap both operations in a
 transaction if the backend supports it.
 

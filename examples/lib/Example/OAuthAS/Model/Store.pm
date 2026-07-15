@@ -4,7 +4,7 @@ use Moo;
 extends 'Catalyst::Model';
 with 'Catalyst::Plugin::OAuth2::AuthorizationServer::Role::Store';
 
-# Process-wide in-memory storage — fine for a single-process example, NOT for
+# Process-wide in-memory storage: fine for a single-process example, NOT for
 # production (use a real datastore there).
 my ( %CLIENTS, %REQUESTS, %CODES, %REFRESH );
 

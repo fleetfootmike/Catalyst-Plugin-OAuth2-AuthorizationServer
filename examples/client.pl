@@ -21,7 +21,8 @@ my $client_id = decode_json( $reg->{content} )->{client_id};
 say "registered client_id=$client_id";
 
 # 2) Authorize with PKCE (S256). Capture the code from the redirect Location.
-my $verifier  = 'example-code-verifier-0123456789-abcdef';
+# RFC 7636 4.1: 43-128 characters of [A-Za-z0-9._~-].
+my $verifier  = 'example-code-verifier-0123456789-abcdefghijklm';
 my $challenge = encode_base64url( sha256($verifier) );
 my %q = (
     client_id             => $client_id,

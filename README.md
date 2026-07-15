@@ -12,12 +12,18 @@ MCP endpoint work (sub-spec [02c]); layered alongside
 
 ## Limitations (v1)
 
+Access tokens are signed with a symmetric HMAC algorithm only (`HS256` by
+default, or `HS384`/`HS512`). Asymmetric signing and `alg=none` are not
+supported and no JWKS is published: this is deliberate for the MCP
+single-server profile, where the Authorization Server and Resource Server
+share a deployment and a key.
+
 Refresh-token rotation revokes the presented token but does not revoke the
 whole token family on a detected reuse (planned enhancement). Apps can call
 `revoke_refresh_tokens_for_subject` on logout/deactivation.
 
 Garbage-collecting abandoned Dynamic Client Registrations (clients that never
-completed a token exchange) is the host app's concern — the Store has the
+completed a token exchange) is the host app's concern: the Store has the
 visibility to identify them and run the cleanup; this plugin tracks no client
 usage.
 

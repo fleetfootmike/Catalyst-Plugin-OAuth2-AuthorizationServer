@@ -44,7 +44,7 @@ my $client_id;
 
 # --- authorize: our TestApp authn hook auto-consents as "user-1" and
 #     redirects to redirect_uri?code=... ---
-my $verifier  = 'the-code-verifier-value';
+my $verifier  = 'the-code-verifier-value-0123456789012345678';
 my $challenge = encode_base64url( sha256($verifier) );
 my $code;
 {
@@ -137,6 +137,45 @@ my $refresh;
     is( $res->code, 400, 'missing grant_type -> 400' );
     is( decode_json( $res->content )->{error}, 'invalid_request',
         'missing grant_type is invalid_request' );
+}
+
+# --- duplicate parameters are rejected, not silently collapsed (RFC 6749 3.2.1) ---
+{
+    my $res = request( GET '/oauth/authorize?'
+        . "client_id=$client_id&client_id=someone-else"
+        . '&redirect_uri=https://app/cb&response_type=code'
+        . "&code_challenge=$challenge&code_challenge_method=S256"
+        . '&resource=https://rs/mcp&state=dup1' );
+    is( $res->code, 400, 'duplicated client_id on authorize -> 400' );
+    is( decode_json( $res->content )->{error}, 'invalid_request',
+        'duplicated authorize param is invalid_request' );
+}
+
+# a duplicated redirect_uri must render directly: rejecting it happens before
+# any validation, so it must never 302 to a client-supplied URI (open redirect)
+{
+    my $res = request( GET '/oauth/authorize?'
+        . "client_id=$client_id&redirect_uri=https://app/cb"
+        . '&redirect_uri=https://evil/cb&response_type=code'
+        . "&code_challenge=$challenge&code_challenge_method=S256"
+        . '&resource=https://rs/mcp&state=dup2' );
+    is( $res->code, 400, 'duplicated redirect_uri -> 400, not a redirect' );
+    is( $res->header('Location'), undef,
+        'duplicated redirect_uri produces no Location header (no open redirect)' );
+    is( decode_json( $res->content )->{error}, 'invalid_request',
+        'duplicated redirect_uri is invalid_request' );
+}
+
+# same rule on the token endpoint (body parameters)
+{
+    my $res = request( POST '/oauth/token', [
+        grant_type => 'authorization_code',
+        grant_type => 'refresh_token',
+        refresh_token => 'whatever',
+    ] );
+    is( $res->code, 400, 'duplicated grant_type on token -> 400' );
+    is( decode_json( $res->content )->{error}, 'invalid_request',
+        'duplicated token param is invalid_request' );
 }
 
 done_testing;

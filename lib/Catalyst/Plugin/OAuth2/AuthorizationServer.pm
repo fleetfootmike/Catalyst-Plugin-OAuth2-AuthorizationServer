@@ -44,14 +44,26 @@ sub _oauth_json_body ( $c ) {
     return $data;
 }
 
-# Catalyst delivers a repeated query/body parameter as an arrayref. Flatten to
-# the last scalar value so a duplicated security-sensitive field cannot become
-# an arrayref that misclassifies or stringifies into a response.
+# Catalyst delivers a repeated query/body parameter as an arrayref. RFC 6749
+# 3.2.1 requires a request that repeats a parameter to be rejected, rather than
+# quietly picking one of the values (which lets an attacker show one value to a
+# validating layer and another to a consuming one). This check runs before any
+# validation, so the error deliberately carries no redirect_uri: the authorize
+# seam then renders it directly instead of 302ing to an unvalidated,
+# client-supplied redirect_uri.
 sub _oauth_params ( $c, $params ) {
     my %out;
     for my $k ( keys %$params ) {
         my $v = $params->{$k};
-        $out{$k} = ref $v eq 'ARRAY' ? $v->[-1] : $v;
+        if ( ref $v eq 'ARRAY' ) {
+            Catalyst::Plugin::OAuth2::AuthorizationServer::Error->throw(
+                error             => 'invalid_request',
+                error_description => 'request parameters must not be repeated',
+                http_status       => 400,
+            ) if @$v > 1;
+            $v = $v->[0];
+        }
+        $out{$k} = $v;
     }
     return \%out;
 }
@@ -123,7 +135,7 @@ sub oauth_authorize ( $c ) {
     catch {
         my $err = $_;
         # Redirect-safe authorize errors (client + redirect_uri already valid)
-        # go back to the client per RFC 6749 §4.1.2.1; the rest render directly.
+        # go back to the client per RFC 6749 4.1.2.1; the rest render directly.
         if ( blessed $err
             && $err->isa('Catalyst::Plugin::OAuth2::AuthorizationServer::Error')
             && defined $err->redirect_uri )
@@ -223,6 +235,18 @@ Registration, and AS metadata) to a Catalyst application. The protocol engine
 lives in L<Catalyst::Plugin::OAuth2::AuthorizationServer::Server>; this module
 is the thin Catalyst seam.
 
+Access tokens are signed with a symmetric HMAC algorithm only: C<jwt_alg> may
+be C<HS256> (the default), C<HS384> or C<HS512>, and C<signing_key> must be at
+least 32, 48 or 64 bytes respectively (RFC 7518 3.2). Asymmetric signing and
+C<alg=none> are not supported and no JWKS is published, which is deliberate
+for the MCP single-server profile: the Authorization Server and the Resource
+Server share a deployment and a key. If you need an AS whose tokens are
+verified by a third party you do not share a secret with, this is not that
+plugin.
+
+Repeated request parameters are rejected with C<invalid_request> rather than
+collapsed to a single value (RFC 6749 3.2.1).
+
 =head1 METHODS
 
 =head2 oauth_metadata
@@ -232,16 +256,19 @@ Render the RFC 8414 Authorization Server Metadata document as C<200 application/
 =head2 oauth_register
 
 Dynamic Client Registration endpoint (RFC 7591). Calls the optional app hook
-C<oauth_dcr_allow_registration($c)> first — if it returns false, responds 429.
+C<oauth_dcr_allow_registration($c)> first: if it returns false, responds 429.
 Reads a JSON body, calls the engine's C<register_client>, and writes C<201>
-JSON with C<Cache-Control: no-store>.
+JSON with C<Cache-Control: no-store>. Metadata that asks for something the AS
+metadata does not advertise is rejected with C<invalid_client_metadata>; see
+L<Catalyst::Plugin::OAuth2::AuthorizationServer::Server/register_client> for
+exactly what is enforced.
 
 =head2 oauth_authorize
 
 Validates the authorize query parameters via the engine. On success, calls the
 app hook C<oauth_authenticate($c, $request_id)> (see below). On a redirect-safe
 error (valid client + redirect_uri already confirmed), redirects to the
-C<redirect_uri> with C<error=> and C<state=> params (RFC 6749 §4.1.2.1).
+C<redirect_uri> with C<error=> and C<state=> params (RFC 6749 4.1.2.1).
 Otherwise renders a JSON error envelope directly.
 
 =head2 oauth_issue_code( $subject, $request_id )

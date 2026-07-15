@@ -24,6 +24,6 @@ token_type=Bearer expires_in=900 scope=example:read
 ```
 
 `client_id`, the authorization `code`, and the JWT are freshly generated on
-every run, so the exact values above will differ between runs — the shape
+every run, so the exact values above will differ between runs; the shape
 (a `client_id`, a `code`, then a JWT `access_token` with `expires_in=900` and
 `scope=example:read`) is what to expect.

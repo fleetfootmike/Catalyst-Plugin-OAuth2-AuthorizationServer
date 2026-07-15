@@ -48,6 +48,11 @@ sub BUILD ( $self, $args ) {
     state %ALLOWED_ALG = map { $_ => 1 } qw/HS256 HS384 HS512/;
     Carp::croak 'jwt_alg must be one of HS256, HS384, HS512'
         unless $ALLOWED_ALG{ $self->jwt_alg };
+    state %MIN_KEY_BYTES = ( HS256 => 32, HS384 => 48, HS512 => 64 );
+    Carp::croak sprintf(
+        'signing_key must be at least %d bytes for %s',
+        $MIN_KEY_BYTES{ $self->jwt_alg }, $self->jwt_alg )
+        if length( $self->signing_key ) < $MIN_KEY_BYTES{ $self->jwt_alg };
 }
 
 # resource may be a scalar or arrayref; normalise to a list.
@@ -90,7 +95,7 @@ sub mint_access_token ( $self, $claims, $aud = undef ) {
 }
 
 # Authorize errors are redirect-safe only AFTER the client and redirect_uri
-# have been validated (RFC 6749 §4.1.2.1). Pass redirect_uri (+ state) for
+# have been validated (RFC 6749 4.1.2.1). Pass redirect_uri (+ state) for
 # those so the seam can 302 the error back to the client; omit it for
 # unknown-client / bad-redirect errors so the seam renders them directly and
 # never redirects to an untrusted URI.
@@ -251,7 +256,7 @@ sub exchange_authorization_code ( $self, $params ) {
     $self->_grant_error('unknown or used authorization code') unless $binding;
 
     # When the request identifies its client, it must match the code's bound
-    # client (RFC 6749 §4.1.3 defence-in-depth on top of PKCE).
+    # client (RFC 6749 4.1.3 defence-in-depth on top of PKCE).
     if ( defined $params->{client_id} && length $params->{client_id} ) {
         $self->_grant_error('client_id mismatch')
             unless $params->{client_id} eq $binding->{client_id};
@@ -263,6 +268,10 @@ sub exchange_authorization_code ( $self, $params ) {
     my $verifier = $params->{code_verifier};
     $self->_grant_error('code_verifier required')
         unless defined $verifier && length $verifier;
+    # RFC 7636 4.1: 43-128 characters of the unreserved set.
+    $self->_grant_error(
+        'code_verifier must be 43-128 characters of [A-Za-z0-9._~-]')
+        unless $verifier =~ m{\A[A-Za-z0-9._~-]{43,128}\z};
     $self->_grant_error('PKCE verification failed')
         unless $self->_ct_eq( $self->_pkce_s256($verifier),
         $binding->{code_challenge} );
@@ -278,7 +287,7 @@ sub refresh ( $self, $params ) {
     my $binding = $self->store->rotate_refresh_token( $self->_hash_token($raw) );
     $self->_grant_error('unknown or revoked refresh token') unless $binding;
 
-    # Mirror the code-exchange client binding check (RFC 6749 §6).
+    # Mirror the code-exchange client binding check (RFC 6749 6).
     if ( defined $params->{client_id} && length $params->{client_id} ) {
         $self->_grant_error('client_id mismatch')
             unless $params->{client_id} eq $binding->{client_id};
@@ -337,12 +346,59 @@ sub register_client ( $self, $metadata ) {
             if $parsed->can('fragment') && defined $parsed->fragment;
     }
 
+    $self->_validate_client_metadata($metadata);
+
     my $json = JSON::MaybeXS->new( utf8 => 1, canonical => 1 );
     $self->_invalid_metadata('client metadata too large')
         if length( $json->encode($metadata) ) > $self->metadata_max_bytes;
 
     my $client = { %$metadata, client_id => $self->_random_token(16) };
     return $self->store->create_client($client);
+}
+
+# RFC 7591 3.2.1: reject a registration whose metadata asks for something this
+# AS does not support. The allow-lists are read straight off metadata_document,
+# so registration can never accept a value discovery does not advertise. Fields
+# RFC 7591 leaves free-form (client_name, logo_uri, contacts, extensions, and
+# scope when no scopes_supported is configured) are left alone: a value is only
+# rejected where the AS has actually declared what it supports.
+sub _validate_client_metadata ( $self, $metadata ) {
+    my $doc = $self->metadata_document;
+
+    if ( exists $metadata->{token_endpoint_auth_method} ) {
+        my $method = $metadata->{token_endpoint_auth_method};
+        my %ok = map { $_ => 1 }
+            @{ $doc->{token_endpoint_auth_methods_supported} };
+        $self->_invalid_metadata('unsupported token_endpoint_auth_method')
+            if ref $method || !defined $method || !$ok{$method};
+    }
+
+    for my $field (qw/grant_types response_types/) {
+        next unless exists $metadata->{$field};
+        my $values = $metadata->{$field};
+        $self->_invalid_metadata(
+            "$field must be a non-empty array of strings")
+            unless ref $values eq 'ARRAY' && @$values;
+        my %ok = map { $_ => 1 } @{ $doc->{"${field}_supported"} };
+        for my $v (@$values) {
+            $self->_invalid_metadata("unsupported $field value")
+                if ref $v || !defined $v || !$ok{$v};
+        }
+    }
+
+    # scope is only constrained when the AS advertises scopes_supported.
+    if ( exists $metadata->{scope} && $self->scopes_supported ) {
+        my $scope = $metadata->{scope};
+        $self->_invalid_metadata('scope must be a string')
+            if ref $scope || !defined $scope;
+        my %ok = map { $_ => 1 } @{ $self->scopes_supported };
+        for my $s ( split ' ', $scope ) {
+            $self->_invalid_metadata(
+                'one or more requested scopes are not supported')
+                unless $ok{$s};
+        }
+    }
+    return;
 }
 
 =head1 NAME
@@ -355,6 +411,14 @@ Authorization Server engine
 The pure-logic OAuth 2.1 engine behind the Catalyst seam. Holds the Store
 reference, the signing key, and configuration; is otherwise stateless (the
 only mutable state lives in the injected Store).
+
+Access tokens are signed with a symmetric HMAC algorithm only: C<jwt_alg> may
+be C<HS256> (the default), C<HS384> or C<HS512>. Asymmetric signing (C<RS*>,
+C<ES*>, C<PS*>) and C<alg=none> are not supported, and no JWKS is published:
+this is deliberate for the MCP single-server profile, where the Authorization
+Server and Resource Server share one deployment and one key. C<signing_key>
+must be at least as long as the algorithm's hash output (32, 48 or 64 bytes
+respectively, per RFC 7518 3.2); a shorter key is rejected at construction.
 
 =head1 METHODS
 
@@ -371,9 +435,44 @@ present; each must be HTTPS or loopback HTTP; no fragments; within length
 limits). Generates a C<client_id>, calls C<Store::create_client>, and returns
 the stored client hashref.
 
+Per RFC 7591 3.2.1, registration also rejects metadata asking for anything
+this AS does not support, with C<invalid_client_metadata>. The allow-lists are
+taken from L</metadata_document>, so registration can never accept a value the
+discovery document does not advertise:
+
+=over
+
+=item *
+
+C<token_endpoint_auth_method> must be one of
+C<token_endpoint_auth_methods_supported> (C<none>: this profile registers
+public PKCE clients, so C<client_secret_basic> and friends are rejected).
+
+=item *
+
+C<grant_types> must be a non-empty arrayref, each value one of
+C<grant_types_supported> (C<authorization_code>, C<refresh_token>).
+
+=item *
+
+C<response_types> must be a non-empty arrayref, each value one of
+C<response_types_supported> (C<code>).
+
+=item *
+
+C<scope> is checked against C<scopes_supported> B<only> when the AS is
+configured with one; with no C<scopes_supported> the server declares no
+constraint, so C<scope> is left free-form.
+
+=back
+
+Everything else RFC 7591 leaves free-form (C<client_name>, C<client_uri>,
+C<logo_uri>, C<contacts>, C<software_id>, extension fields) is stored as
+given and never rejected merely for being present.
+
 =head2 validate_authorize( \%params )
 
-Validate an authorization request (RFC 6749 §4.1.1 + PKCE RFC 7636). Checks
+Validate an authorization request (RFC 6749 4.1.1 + PKCE RFC 7636). Checks
 client, redirect_uri, response_type, code_challenge (must be a 43-character
 base64url string), code_challenge_method (must be C<S256>), scope, and
 resource. On success, stashes the request via
@@ -387,13 +486,13 @@ state }>. Throws C<invalid_request> if the request is unknown or expired.
 
 =head2 exchange_authorization_code( \%params )
 
-Authorization-code grant (RFC 6749 §4.1.3). Validates code, redirect_uri,
+Authorization-code grant (RFC 6749 4.1.3). Validates code, redirect_uri,
 client_id binding, and PKCE verifier. Returns C<{ access_token, token_type,
 expires_in, refresh_token }> (plus C<scope> if the request carried one).
 
 =head2 refresh( \%params )
 
-Refresh-token grant (RFC 6749 §6). Rotates the refresh token via
+Refresh-token grant (RFC 6749 6). Rotates the refresh token via
 C<Store::rotate_refresh_token> and mints a new access + refresh pair.
 Optionally validates a C<client_id> parameter against the binding.
 
