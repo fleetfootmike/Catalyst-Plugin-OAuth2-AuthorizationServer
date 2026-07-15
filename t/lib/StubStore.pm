@@ -35,21 +35,25 @@ sub consume_auth_code ( $self, $code ) {
 }
 
 sub create_refresh_token ( $self, $hash, $binding, $exp ) {
-    $self->refresh->{$hash} = { binding => $binding, exp => $exp };
+    $self->refresh->{$hash}
+        = { binding => $binding, exp => $exp, revoked => 0 };
     return 1;
 }
 sub rotate_refresh_token ( $self, $hash ) {
-    my $row = delete $self->refresh->{$hash} or return undef;
+    my $row = $self->refresh->{$hash} or return undef;
     return undef if $row->{exp} < time;
-    return $row->{binding};
+    return { binding => $row->{binding}, reused => 1 } if $row->{revoked};
+    $row->{revoked} = 1;    # tombstone: retained until exp, never deleted
+    return { binding => $row->{binding} };
 }
 sub revoke_refresh_tokens_for_subject ( $self, $subject ) {
     my $n = 0;
     for my $h ( keys %{ $self->refresh } ) {
-        if ( ( $self->refresh->{$h}{binding}{subject} // '' ) eq $subject ) {
-            delete $self->refresh->{$h};
-            $n++;
-        }
+        my $row = $self->refresh->{$h};
+        next if $row->{revoked};
+        next unless ( $row->{binding}{subject} // '' ) eq $subject;
+        $row->{revoked} = 1;
+        $n++;
     }
     return $n;
 }

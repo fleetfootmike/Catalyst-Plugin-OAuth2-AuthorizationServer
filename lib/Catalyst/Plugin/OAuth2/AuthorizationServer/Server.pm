@@ -284,8 +284,15 @@ sub refresh ( $self, $params ) {
     $self->_grant_error('refresh_token is required')
         unless defined $raw && length $raw;
 
-    my $binding = $self->store->rotate_refresh_token( $self->_hash_token($raw) );
-    $self->_grant_error('unknown or revoked refresh token') unless $binding;
+    my $result = $self->store->rotate_refresh_token( $self->_hash_token($raw) );
+    $self->_grant_error('unknown or revoked refresh token') unless $result;
+
+    # A replayed token is detected here but the family is not revoked until
+    # Task 3 wires revoke_family in. Same generic error either way.
+    $self->_grant_error('unknown or revoked refresh token')
+        if $result->{reused};
+
+    my $binding = $result->{binding};
 
     # Mirror the code-exchange client binding check (RFC 6749 6).
     if ( defined $params->{client_id} && length $params->{client_id} ) {

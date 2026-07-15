@@ -27,18 +27,22 @@ sub consume_auth_code ( $self, $code ) {
     return $row->{exp} < time ? undef : $row->{b};
 }
 sub create_refresh_token ( $self, $hash, $b, $exp ) {
-    $REFRESH{$hash} = { b => $b, exp => $exp }; return 1;
+    $REFRESH{$hash} = { b => $b, exp => $exp, revoked => 0 }; return 1;
 }
 sub rotate_refresh_token ( $self, $hash ) {
-    my $row = delete $REFRESH{$hash} or return undef;
-    return $row->{exp} < time ? undef : $row->{b};
+    my $row = $REFRESH{$hash} or return undef;
+    return undef if $row->{exp} < time;
+    return { binding => $row->{b}, reused => 1 } if $row->{revoked};
+    $row->{revoked} = 1;
+    return { binding => $row->{b} };
 }
 sub revoke_refresh_tokens_for_subject ( $self, $subject ) {
     my $n = 0;
     for my $h ( keys %REFRESH ) {
-        ( $REFRESH{$h}{b}{subject} // '' ) eq $subject
-            and delete $REFRESH{$h}
-            and $n++;
+        next if $REFRESH{$h}{revoked};
+        next unless ( $REFRESH{$h}{b}{subject} // '' ) eq $subject;
+        $REFRESH{$h}{revoked} = 1;
+        $n++;
     }
     return $n;
 }

@@ -89,6 +89,18 @@ my $refresh;
     isnt( decode_json( $res->content )->{refresh_token}, $refresh, 'rotated' );
 }
 
+# --- token: replaying an already-rotated refresh token is rejected
+#     (RFC 9700 reuse detection). $refresh was consumed by the rotation
+#     above, so presenting it again is a replay of a live-token family. ---
+{
+    my $res = request( POST '/oauth/token', [
+        grant_type => 'refresh_token', refresh_token => $refresh,
+    ] );
+    is( $res->code, 400, 'replayed refresh token -> 400' );
+    is( decode_json( $res->content )->{error}, 'invalid_grant',
+        'replayed refresh token is invalid_grant' );
+}
+
 # --- token: bad grant -> OAuth error envelope ---
 {
     my $res = request( POST '/oauth/token', [

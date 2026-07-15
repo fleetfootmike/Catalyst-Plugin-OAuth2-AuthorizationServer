@@ -27,5 +27,6 @@ t/server-authorize.t
 t/server-dcr.t
 t/server-issue-code.t
 t/server-metadata.t
+t/server-refresh-family.t
 t/server-token-mint.t
 t/server-token.t

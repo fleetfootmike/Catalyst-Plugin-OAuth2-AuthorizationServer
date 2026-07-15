@@ -67,9 +67,32 @@ C<client_id>, C<subject>, C<scope>, C<resource>. Return true.
 
 =head2 rotate_refresh_token( $token_hash )
 
-Atomically validate-and-revoke the refresh token identified by C<$token_hash>,
-returning its C<\%binding> (so the engine can mint a fresh pair), or undef if
-unknown/expired/already revoked.
+Atomically validate-and-revoke the refresh token identified by C<$token_hash>.
+Returns one of three outcomes:
+
+=over
+
+=item C<undef>
+
+Unknown or expired. Not a replay: the engine answers C<invalid_grant> and does
+nothing else.
+
+=item C<< { binding => \%binding } >>
+
+The token was live and is now revoked. The engine mints the next pair.
+
+=item C<< { binding => \%binding, reused => 1 } >>
+
+The token is known but was already revoked: a replay. The binding is returned
+so the engine can read C<family_id> off it and revoke the family.
+
+=back
+
+B<Retention:> a rotated token MUST be retained until its original
+C<$expires_at>, marked revoked rather than deleted. Pruning earlier silently
+disables reuse detection: the replay degrades to C<undef>, the engine reads it
+as unknown, and the compromised family survives. Pruning after C<$expires_at>
+is the host application's job.
 
 B<Concurrency note:> a non-atomic implementation enables refresh-token replay
 under concurrent requests. The engine calls C<create_refresh_token> immediately
