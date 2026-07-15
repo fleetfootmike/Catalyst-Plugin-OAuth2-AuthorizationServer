@@ -141,4 +141,24 @@ like(
     'alg allowlist runs before the key-length lookup'
 );
 
+# jti: present, unique per mint, and not overridable by the caller
+{
+    my $eng2 = $class->new(
+        store => T::Store->new, signing_key => $key,
+        issuer => 'https://as', resource => 'https://rs/mcp',
+    );
+    my $one = decode_jwt(
+        token => $eng2->mint_access_token({ sub => 'u' }), key => $key );
+    my $two = decode_jwt(
+        token => $eng2->mint_access_token({ sub => 'u' }), key => $key );
+
+    ok( length $one->{jti}, 'access token carries a jti' );
+    isnt( $one->{jti}, $two->{jti}, 'jti is unique per mint' );
+
+    my $forced = decode_jwt(
+        token => $eng2->mint_access_token({ sub => 'u', jti => 'attacker' }),
+        key   => $key );
+    isnt( $forced->{jti}, 'attacker', 'a caller cannot pin the jti' );
+}
+
 done_testing;

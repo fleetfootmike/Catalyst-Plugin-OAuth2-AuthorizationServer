@@ -317,7 +317,9 @@ L<Catalyst::Plugin::OAuth2::AuthorizationServer::Role::Store>.
 B<Security limitation:> revoking the family does B<not> kill access tokens
 already minted from it. They are stateless JWTs, verified without consulting
 the Store, and stay valid until C<access_ttl> elapses. Keep C<access_ttl>
-short. This plugin implements no denylist and no RFC 7009 revocation endpoint.
+short. Access tokens carry a C<jti> claim so a denylist can be added later
+without changing the token format, but this plugin implements no denylist and
+no RFC 7009 revocation endpoint.
 
 A concurrent double-refresh (the same token presented twice at once, with no
 attacker involved) is indistinguishable from a replay and will revoke the

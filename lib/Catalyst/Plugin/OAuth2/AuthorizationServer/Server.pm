@@ -71,7 +71,7 @@ sub _random_token ( $self, $bytes = 32 ) {
 }
 
 # Mint a signed access-token JWT. Caller supplies sub + scope (+ any extras);
-# the engine stamps iss, aud, iat, exp.
+# the engine stamps iss, aud, iat, exp, jti.
 sub mint_access_token ( $self, $claims, $aud = undef ) {
     my $now = $self->_now;
     # aud is the AUTHORIZED resource (from the code/refresh binding); fall back
@@ -86,6 +86,9 @@ sub mint_access_token ( $self, $claims, $aud = undef ) {
         aud => ( @aud == 1 ? $aud[0] : \@aud ),
         iat => $now,
         exp => $now + $self->access_ttl,
+        # Nothing reads jti yet. It exists so a revocation denylist can be
+        # added later without changing the token format for issued tokens.
+        jti => $self->_random_token(16),
     );
     return encode_jwt(
         payload => \%payload,
@@ -452,7 +455,8 @@ respectively, per RFC 7518 3.2); a shorter key is rejected at construction.
 =head2 mint_access_token( \%claims, $aud )
 
 Mint a signed JWT access token. The engine stamps C<iss>, C<aud>, C<iat>,
-C<exp>. C<$aud> defaults to the configured C<resource> list. Returns the
+C<exp> and C<jti>, and they are stamped after C<\%claims>, so a caller cannot
+override them. C<$aud> defaults to the configured C<resource> list. Returns the
 encoded JWT string.
 
 =head2 register_client( \%metadata )
