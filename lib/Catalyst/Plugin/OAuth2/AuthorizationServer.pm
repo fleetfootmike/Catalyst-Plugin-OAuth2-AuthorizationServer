@@ -298,6 +298,15 @@ by an in-memory store, plus a core-Perl client that drives the full
 authorization-code + PKCE flow. Start it with C<plackup examples/app.psgi>
 and run C<perl examples/client.pl>. See F<examples/README.md>.
 
+=head1 AUTHOR
+
+Mike Whitaker <mike@altrion.org>
+
+=head1 LICENSE
+
+This library is free software; you can redistribute it and/or modify it
+under the terms of the Artistic License, as distributed with Perl.
+
 =cut
 
 1;

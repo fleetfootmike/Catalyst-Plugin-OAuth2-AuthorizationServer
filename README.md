@@ -20,3 +20,12 @@ Garbage-collecting abandoned Dynamic Client Registrations (clients that never
 completed a token exchange) is the host app's concern — the Store has the
 visibility to identify them and run the cleanup; this plugin tracks no client
 usage.
+
+## Author
+
+Mike Whitaker <mike@altrion.org>
+
+## License
+
+This library is free software; you can redistribute it and/or modify it
+under the terms of the Artistic License, as distributed with Perl.

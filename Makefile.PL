@@ -5,7 +5,7 @@ WriteMakefile(
     NAME             => 'Catalyst::Plugin::OAuth2::AuthorizationServer',
     VERSION_FROM     => 'lib/Catalyst/Plugin/OAuth2/AuthorizationServer.pm',
     ABSTRACT         => 'MCP-profile OAuth 2.1 Authorization Server plugin for Catalyst',
-    AUTHOR           => 'Mike Whitaker <fleetfootmike@gmail.com>',
+    AUTHOR           => 'Mike Whitaker <mike@altrion.org>',
     LICENSE          => 'perl_5',
     MIN_PERL_VERSION => '5.036',
     PREREQ_PM => {
