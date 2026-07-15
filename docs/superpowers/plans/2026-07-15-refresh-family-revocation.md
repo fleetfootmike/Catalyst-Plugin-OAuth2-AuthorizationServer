@@ -955,9 +955,252 @@ caller cannot pin it to a value of their choosing.
 
 ---
 
+### Task 5: close the concurrent-replay race (added 2026-07-15)
+
+Tasks 1-4 are committed. The final whole-branch review found, and the
+controller reproduced, a race that inverts the whole defence. See the spec's
+`AMENDMENT 2026-07-15` section.
+
+The engine makes two independent Store calls with nothing between them:
+
+```text
+R1: rotate_refresh_token(T)   -> live, tombstoned; about to create T'
+R2: rotate_refresh_token(T)   -> reused -> revoke_family(F)
+R1: create_refresh_token(T', family F)          <-- born AFTER the revoke
+```
+
+`T'` is born live into a revoked family and rotates indefinitely. Reproduced:
+5 successful rotations after revocation, expected 0. The attacker controls the
+timing and can retry until it lands, ending with the only live token in a
+family the logs say was revoked.
+
+**Fix:** make revocation a property of the family, not of the rows that happen
+to exist. `revoke_family` marks the family; `create_refresh_token` refuses to
+birth into a marked family. Both live in ONE Store method each, so a Store can
+be atomic by construction, which the previous "wrap both in a transaction"
+note could never deliver across two engine-called methods.
+
+**Files:**
+
+- Modify: `lib/Catalyst/Plugin/OAuth2/AuthorizationServer/Role/Store.pm`
+- Modify: `lib/Catalyst/Plugin/OAuth2/AuthorizationServer/Server.pm`
+- Modify: `t/lib/StubStore.pm`
+- Modify: `t/lib/TestApp/Model/OAuthStore.pm`
+- Modify: `examples/lib/Example/OAuthAS/Model/Store.pm`
+- Modify: `t/server-refresh-family.t`
+
+**Interfaces:**
+
+- Consumes: Task 3's `revoke_family($family_id)`, Task 2's `family_id`.
+- Produces: `create_refresh_token` returns false when the family is revoked.
+
+- [ ] **Step 1: Write the failing test**
+
+This is the reproduction, and it must fail before the fix. Append to
+`t/server-refresh-family.t`. It drives the replay from inside the winner's
+`create_refresh_token`, which is the only way to hit the gap deterministically:
+
+```perl
+# A replay racing a rotation must not leave a live token in the dead family.
+{
+    my $eng   = fresh_engine();
+    my $stale = first_pair($eng)->{refresh_token};
+
+    my $interleaved = 0;
+    no warnings 'redefine';
+    my $orig = \&StubStore::create_refresh_token;
+    local *StubStore::create_refresh_token = sub {
+        my @args = @_;
+        # R2 lands in R1's gap: after R1 rotated, before R1 created.
+        eval { do_refresh( $eng, $stale ) } unless $interleaved++;
+        return $orig->(@args);
+    };
+
+    my $r1 = eval { do_refresh( $eng, $stale ) };
+    ok( $interleaved, 'the replay interleaved' );
+
+    my $rt = $r1 && $r1->{refresh_token};
+    my $survived = 0;
+    if ($rt) {
+        for ( 1 .. 5 ) {
+            my $next = eval { do_refresh( $eng, $rt ) } or last;
+            $rt = $next->{refresh_token};
+            $survived++;
+        }
+    }
+    is( $survived, 0, 'no rotation survives a raced family revocation' );
+}
+```
+
+- [ ] **Step 2: Run it and confirm it fails**
+
+Run: `prove -l t/server-refresh-family.t`
+Expected: FAIL, `got: '5'  expected: '0'`. If it does not fail, the
+reproduction is wrong: fix it before changing any code.
+
+- [ ] **Step 3: Add the family marker to the three Stores**
+
+Each Store gains a revoked-families record and two behaviour changes:
+`revoke_family` marks the family; `create_refresh_token` refuses a marked one.
+
+`t/lib/StubStore.pm` (per-instance storage, binding key `binding`):
+
+```perl
+has revoked_families => ( is => 'ro', default => sub { {} } );
+
+sub create_refresh_token ( $self, $hash, $binding, $exp ) {
+    # A successor must not be born into a family that has been revoked. The
+    # check and the insert are one Store call, so this is atomic by
+    # construction; the engine cannot provide that across two calls.
+    return 0 if $self->revoked_families->{ $binding->{family_id} // '' };
+    $self->refresh->{$hash}
+        = { binding => $binding, exp => $exp, revoked => 0 };
+    return 1;
+}
+
+sub revoke_family ( $self, $family_id ) {
+    # Mark the FAMILY, not just the rows that exist right now: a rotation in
+    # flight may still create a successor after this returns.
+    $self->revoked_families->{$family_id} = 1;
+    my $n = 0;
+    for my $h ( keys %{ $self->refresh } ) {
+        my $row = $self->refresh->{$h};
+        next if $row->{revoked};
+        next unless ( $row->{binding}{family_id} // '' ) eq $family_id;
+        $row->{revoked} = 1;
+        $n++;
+    }
+    return $n;
+}
+```
+
+`t/lib/TestApp/Model/OAuthStore.pm` and
+`examples/lib/Example/OAuthAS/Model/Store.pm` both use a process-wide hash and
+the binding key `b`. Add `my %REVOKED_FAMILIES;` alongside their existing
+`%REFRESH`, and make the same two changes, reading `$b->{family_id}` /
+`$REFRESH{$h}{b}{family_id}` per each file's own convention.
+
+- [ ] **Step 4: Make the engine honour a refused create**
+
+In `lib/.../Server.pm`, `_issue_token_pair`, the `create_refresh_token` call
+becomes checked:
+
+```perl
+    my $created = $self->store->create_refresh_token(
+        $self->_hash_token($refresh),
+        {
+            client_id => $binding->{client_id},
+            subject   => $binding->{subject},
+            scope     => $binding->{scope},
+            resource  => $binding->{resource},
+            family_id => $binding->{family_id},
+        },
+        $self->_now + $self->refresh_ttl,
+    );
+    # The family was revoked while this rotation was in flight: a concurrent
+    # replay was detected. Same generic error as any other dead token.
+    $self->_grant_error('unknown or revoked refresh token') unless $created;
+```
+
+The access token minted just above is discarded and never reaches the client.
+
+- [ ] **Step 5: Run the test and the suite**
+
+Run: `prove -l t/server-refresh-family.t && prove -lr t`
+Expected: both PASS.
+
+- [ ] **Step 6: Update the role POD**
+
+Replace the `create_refresh_token` retention/contract wording so it states the
+refusal, and rewrite the concurrency note, which currently tells implementers
+to do something they cannot:
+
+```pod
+=head2 create_refresh_token( $token_hash, \%binding, $expires_at )
+
+Persist a refresh token by its hash (never the raw token). C<\%binding> carries
+C<client_id>, C<subject>, C<scope>, C<resource> and C<family_id>. Returns true
+when the token was persisted.
+
+B<Returns false, persisting nothing, if C<family_id> names a revoked family.>
+A rotation already in flight when C<revoke_family> runs would otherwise create
+its successor afterwards, leaving a live token in a family the server believes
+it killed, and an attacker who races two refreshes with a stolen token can
+force exactly that. The check and the insert MUST be atomic: they are one
+method call so a single statement can do both, e.g. an C<INSERT ... WHERE NOT
+EXISTS> against the revoked-families record.
+
+C<family_id> is an opaque string identifying the rotation chain this token
+belongs to: it is minted when an authorization code is exchanged and inherited
+by every token rotated from it. The Store MUST persist it and MUST be able to
+find rows by it (see C<revoke_family>).
+```
+
+and for `revoke_family`, state that it marks the family:
+
+```pod
+Revoke every refresh token sharing C<$family_id>, live or already tombstoned,
+B<and record the family itself as revoked> so that a rotation in flight cannot
+create a successor into it afterwards (see C<create_refresh_token>). Return the
+number newly revoked. Idempotent: revoking an already-revoked family returns 0
+and is not an error. An implementation may use a single flag for both the
+rotation tombstone and revocation, in which case an already-tombstoned token
+counts as already revoked and is not counted again.
+```
+
+Delete the old "Wrap both operations in a transaction if the backend supports
+it" advice from `rotate_refresh_token`'s note: it is not achievable across two
+engine-called methods and it implied a safety that did not exist. Say instead
+that each Store method must be individually atomic, and that the
+create-refuses-revoked-family rule is what makes the pair safe.
+
+- [ ] **Step 7: Correct the LIMITATIONS claim**
+
+`lib/.../AuthorizationServer.pm` currently says a concurrent double-refresh
+"will revoke the family". That is now true, but only because of this task; it
+was false before. Check the paragraph still reads correctly and states that the
+in-flight rotation fails rather than surviving.
+
+- [ ] **Step 8: Verify**
+
+```bash
+prove -lr t
+PERL_CRITIC_TEST=1 prove -l t/perl_critic.t
+grep -rnP '[^\x00-\x7F]' --include='*.pm' --include='*.t' --include='*.md' .
+```
+
+- [ ] **Step 9: Ask before committing, then commit**
+
+Proposed message:
+
+```text
+Stop a raced replay leaving a live token in a dead family
+
+revoke_family swept the rows that existed when it ran, so a rotation already in
+flight created its successor afterwards and that successor was born live into
+the revoked family. It then rotated indefinitely. An attacker fires two
+refreshes with a stolen token and retries until the loser's revoke lands in the
+winner's gap: the legitimate client is locked out, the attacker keeps the only
+live token, and the logs say the family was revoked. Strictly worse than having
+no reuse detection.
+
+Revocation is now a property of the family rather than of its rows, and
+create_refresh_token refuses to birth a successor into a revoked one. Both are
+single Store calls, so an implementer can make them atomic; the old advice to
+wrap rotate and create in a transaction was not achievable across two methods
+the engine calls separately, and is gone.
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
+
+| Spec section | Task |
+| --- | --- |
+| AMENDMENT: family marker, create refuses revoked family | 5 |
+| AMENDMENT: role POD concurrency note rewritten | 5 |
 
 | Spec section | Task |
 | --- | --- |

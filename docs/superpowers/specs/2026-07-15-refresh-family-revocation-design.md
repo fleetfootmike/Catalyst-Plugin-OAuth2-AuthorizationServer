@@ -177,6 +177,80 @@ between a user retrying a flaky request and a user being logged out.
 Document it as accepted. Store atomicity remains the mitigation, and the
 existing concurrency note in the role POD is extended rather than replaced.
 
+## AMENDMENT 2026-07-15: the above is not enough, and was wrong
+
+The final whole-branch review found, and the controller reproduced, a race that
+**inverts** the defence. The section above claims a concurrent double-refresh
+revokes the family. It does not.
+
+The engine makes two independent Store calls with nothing between them, so a
+second request's `revoke_family` lands in the gap:
+
+```text
+R1: rotate_refresh_token(T)   -> live, tombstoned; about to create T'
+R2: rotate_refresh_token(T)   -> reused -> revoke_family(F)
+R1: create_refresh_token(T', family F)          <-- born AFTER the revoke
+```
+
+`revoke_family(F)` revokes what exists at that instant. `T'` does not exist
+yet, so it is born **live into a revoked family**, and every later rotation
+mints another live successor. Reproduced against StubStore with both Store
+calls individually atomic, exactly as documented: 5 successful rotations after
+the family was revoked, expected 0.
+
+An attacker controls this race: fire two simultaneous refreshes with a stolen
+token and retry until the loser's revoke lands in the winner's gap. The outcome
+is worse than having no reuse detection: the legitimate client is locked out,
+the attacker keeps the only live token, and the logs say the family was
+revoked.
+
+The role POD's "wrap both operations in a transaction" note cannot save a Store
+author. The engine calls `rotate_refresh_token` and `create_refresh_token` as
+two separate methods with no pairing or rollback contract, so no envelope is
+possible across them. A Store implementing rotation as an autocommit
+`UPDATE ... WHERE hash = ? AND revoked = 0` satisfies the documented contract
+and is vulnerable.
+
+### The fix: revocation is a property of the family, not of its rows
+
+`revoke_family` must record **the family itself** as revoked, durably, rather
+than only sweeping the rows that exist when it runs. `create_refresh_token`
+must then refuse to birth a successor into a revoked family.
+
+- `revoke_family( $family_id )`: mark the family revoked AND revoke its
+  current tokens. Still returns the number newly revoked; still idempotent.
+- `create_refresh_token( $token_hash, \%binding, $expires_at )`: if
+  `$binding->{family_id}` names a revoked family, persist nothing and return
+  false. Otherwise persist and return true.
+
+The engine treats a false return as the family having died underneath it and
+answers the same generic `invalid_grant`. R1 above now fails: correct, since
+its family is compromised. Both parties are locked out, which is what RFC 9700
+asks for.
+
+**Why this works where the transaction note did not.** The check and the insert
+live inside ONE Store method, so a Store can make them atomic by construction:
+one statement, e.g. an `INSERT ... WHERE NOT EXISTS (SELECT 1 FROM
+revoked_families WHERE family_id = ?)`. The previous design required atomicity
+*across* two engine-called methods, which a Store cannot provide no matter how
+carefully it is written. That is the difference between a contract an
+implementer can satisfy and one they cannot.
+
+### This also closes the single-flag problem
+
+The review rated the single `revoked` flag an Important, not the harmless Minor
+previously recorded, because it blocks this fix: to refuse a successor you must
+ask "was this family revoked?", and with one flag that is unanswerable, since
+every healthy chain has revoked rows (its own tombstones). The family-level
+marker IS the missing distinction, so one change closes both.
+
+### Cost
+
+Another Store-contract break. Still free: pre-release, no external consumers.
+The marker is per-family, so it is bounded by families rather than tokens, and
+it is pruned on the same rule as tombstones (the host may remove it once the
+family's tokens have expired).
+
 ## Documentation changes
 
 - **`Role::Store` POD:** the three contract changes, and the retention rule
