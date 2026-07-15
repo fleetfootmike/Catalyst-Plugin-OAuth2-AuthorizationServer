@@ -220,6 +220,13 @@ sub _hash_token ( $self, $raw ) { return sha256_hex($raw) }
 
 # Mint an access + refresh pair from a binding ({ subject, scope, ... }).
 sub _issue_token_pair ( $self, $binding ) {
+    # Birth is the caller's job (see exchange_authorization_code); inheritance
+    # is the rotated binding's. Defaulting here with // would silently birth a
+    # new family per rotation, so revoke_family would revoke exactly one token
+    # and detection would look like it works while protecting nothing.
+    Carp::croak 'internal: _issue_token_pair requires a family_id'
+        unless defined $binding->{family_id} && length $binding->{family_id};
+
     my $access = $self->mint_access_token(
         {
             sub => $binding->{subject},
@@ -235,6 +242,7 @@ sub _issue_token_pair ( $self, $binding ) {
             subject   => $binding->{subject},
             scope     => $binding->{scope},
             resource  => $binding->{resource},
+            family_id => $binding->{family_id},
         },
         $self->_now + $self->refresh_ttl,
     );
@@ -276,7 +284,9 @@ sub exchange_authorization_code ( $self, $params ) {
         unless $self->_ct_eq( $self->_pkce_s256($verifier),
         $binding->{code_challenge} );
 
-    return $self->_issue_token_pair($binding);
+    # A code exchange births a new family; a rotation inherits one.
+    return $self->_issue_token_pair(
+        { %$binding, family_id => $self->_random_token(16) } );
 }
 
 sub refresh ( $self, $params ) {

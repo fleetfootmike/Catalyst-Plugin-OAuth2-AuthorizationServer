@@ -63,7 +63,12 @@ fetch-and-delete requirement prevents authorization-code replay.
 =head2 create_refresh_token( $token_hash, \%binding, $expires_at )
 
 Persist a refresh token by its hash (never the raw token). C<\%binding> carries
-C<client_id>, C<subject>, C<scope>, C<resource>. Return true.
+C<client_id>, C<subject>, C<scope>, C<resource> and C<family_id>. Return true.
+
+C<family_id> is an opaque string identifying the rotation chain this token
+belongs to: it is minted when an authorization code is exchanged and inherited
+by every token rotated from it. The Store MUST persist it and MUST be able to
+find rows by it (see C<revoke_family>).
 
 =head2 rotate_refresh_token( $token_hash )
 
