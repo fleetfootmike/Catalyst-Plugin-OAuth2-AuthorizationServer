@@ -307,14 +307,28 @@ C<too_many_requests>. Use for rate-limiting DCR.
 
 =head1 LIMITATIONS
 
-Refresh-token rotation revokes the presented token but does not revoke the
-whole token family on a detected reuse; family revocation on reuse is a planned
-enhancement. Apps can call C<revoke_refresh_tokens_for_subject> on
-logout/deactivation.
+Refresh-token reuse revokes the whole token family (RFC 9700): when a rotated
+token is replayed, every refresh token descended from the same authorization
+is revoked, including the one the legitimate client currently holds. Reuse
+detection depends on the Store retaining rotated tokens until they expire; see
+C<rotate_refresh_token> in
+L<Catalyst::Plugin::OAuth2::AuthorizationServer::Role::Store>.
 
-Garbage-collecting abandoned Dynamic Client Registrations (clients that never
-completed a token exchange) is the host application's responsibility: the Store
-has the visibility to identify and remove them. This plugin tracks no client
+B<Security limitation:> revoking the family does B<not> kill access tokens
+already minted from it. They are stateless JWTs, verified without consulting
+the Store, and stay valid until C<access_ttl> elapses. Keep C<access_ttl>
+short. This plugin implements no denylist and no RFC 7009 revocation endpoint.
+
+A concurrent double-refresh (the same token presented twice at once, with no
+attacker involved) is indistinguishable from a replay and will revoke the
+family. This is inherent to RFC 9700 reuse detection.
+
+Apps can call C<revoke_refresh_tokens_for_subject> on logout/deactivation.
+
+Pruning revoked refresh tokens after they expire is the host application's
+responsibility, as is garbage-collecting abandoned Dynamic Client
+Registrations (clients that never completed a token exchange): the Store has
+the visibility to identify and remove them. This plugin tracks no client
 usage.
 
 =head1 EXAMPLES

@@ -297,10 +297,20 @@ sub refresh ( $self, $params ) {
     my $result = $self->store->rotate_refresh_token( $self->_hash_token($raw) );
     $self->_grant_error('unknown or revoked refresh token') unless $result;
 
-    # A replayed token is detected here but the family is not revoked until
-    # Task 3 wires revoke_family in. Same generic error either way.
-    $self->_grant_error('unknown or revoked refresh token')
-        if $result->{reused};
+    # RFC 9700: a replay means the chain is compromised and we cannot tell the
+    # legitimate client from the attacker, so the whole family goes. Revoke
+    # before erroring, and let a failing revoke_family surface as a 500: a
+    # Store that cannot revoke is broken, and answering invalid_grant while
+    # leaving the family alive fails the wrong way.
+    if ( $result->{reused} ) {
+        Carp::croak 'internal: reused refresh token binding has no family_id'
+            unless defined $result->{binding}{family_id}
+            && length $result->{binding}{family_id};
+        $self->store->revoke_family( $result->{binding}{family_id} );
+        # Same error and description as an unknown token: telling an attacker
+        # that reuse was detected confirms they hold a real token.
+        $self->_grant_error('unknown or revoked refresh token');
+    }
 
     my $binding = $result->{binding};
 

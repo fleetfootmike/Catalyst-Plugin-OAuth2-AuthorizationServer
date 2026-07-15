@@ -13,6 +13,7 @@ requires qw/
     consume_auth_code
     create_refresh_token
     rotate_refresh_token
+    revoke_family
     revoke_refresh_tokens_for_subject
 /;
 
@@ -104,6 +105,20 @@ under concurrent requests. The engine calls C<create_refresh_token> immediately
 after C<rotate_refresh_token> with no transactional envelope: a crash between
 the two calls will invalidate the session. Wrap both operations in a
 transaction if the backend supports it.
+
+=head2 revoke_family( $family_id )
+
+Revoke every refresh token sharing C<$family_id>, live or already tombstoned.
+Return the number newly revoked. Idempotent: revoking an already-revoked
+family returns 0 and is not an error.
+
+An implementation may use a single flag for both "tombstoned by rotation" and
+"revoked by family": in that case an already-tombstoned token counts as
+already revoked, and is not counted again.
+
+Called when C<rotate_refresh_token> reports a replay. Revoking the family is
+the only defence the server has against a stolen refresh token, because it
+cannot tell the legitimate client from the attacker.
 
 =head2 revoke_refresh_tokens_for_subject( $subject )
 

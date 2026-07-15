@@ -13,7 +13,7 @@ package T::Store { use Moo;
     sub save_authorization_request {} sub take_authorization_request {}
     sub create_auth_code {} sub consume_auth_code {}
     sub create_refresh_token {} sub rotate_refresh_token {}
-    sub revoke_refresh_tokens_for_subject {}
+    sub revoke_family {} sub revoke_refresh_tokens_for_subject {}
 }
 package main;
 

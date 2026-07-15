@@ -36,6 +36,16 @@ sub rotate_refresh_token ( $self, $hash ) {
     $row->{revoked} = 1;
     return { binding => $row->{b} };
 }
+sub revoke_family ( $self, $family_id ) {
+    my $n = 0;
+    for my $h ( keys %REFRESH ) {
+        next if $REFRESH{$h}{revoked};
+        next unless ( $REFRESH{$h}{b}{family_id} // '' ) eq $family_id;
+        $REFRESH{$h}{revoked} = 1;
+        $n++;
+    }
+    return $n;
+}
 sub revoke_refresh_tokens_for_subject ( $self, $subject ) {
     my $n = 0;
     for my $h ( keys %REFRESH ) {

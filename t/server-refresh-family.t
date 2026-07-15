@@ -126,6 +126,41 @@ sub bindings ( $eng ) {
         'the replay carries the binding so the family can be found' );
 }
 
+# TestApp::Model::OAuthStore::revoke_family, exercised directly at the Store
+# layer (not through HTTP, where reuse and unknown are deliberately
+# indistinguishable and so cannot pin that a *family* -- not just one token
+# -- was revoked). Storage is process-wide %REFRESH, so distinctive hashes
+# and family ids are used and the store is not assumed to start empty.
+{
+    my $store = TestApp::Model::OAuthStore->new;
+    my $b = sub {
+        return {
+            client_id => 'c1', subject => 'user-oauthstore-fam',
+            family_id => 'oauthstore-FAM-7c1d',
+        };
+    };
+    $store->create_refresh_token( "oauthstore-live$_-7c1d", $b->(), time + 3600 )
+        for 1 .. 3;
+    $store->create_refresh_token(
+        'oauthstore-other-7c1d',
+        {
+            client_id => 'c1', subject => 'user-oauthstore-fam',
+            family_id => 'oauthstore-OTHER-7c1d',
+        },
+        time + 3600,
+    );
+
+    is( $store->revoke_family('oauthstore-FAM-7c1d'), 3,
+        'revokes every live token in the family' );
+    ok( $store->rotate_refresh_token("oauthstore-live$_-7c1d")->{reused},
+        "oauthstore-live$_-7c1d is dead" )
+        for 1 .. 3;
+    ok( !$store->rotate_refresh_token('oauthstore-other-7c1d')->{reused},
+        'a sibling family is untouched' );
+    is( $store->revoke_family('oauthstore-FAM-7c1d'), 0,
+        'revoking again is a no-op' );
+}
+
 # family_id is born at the code exchange and survives a chain of rotations
 {
     my $eng  = fresh_engine();
@@ -182,6 +217,184 @@ sub bindings ( $eng ) {
         qr/family_id/,
         '_issue_token_pair croaks without a family_id'
     );
+}
+
+# the reuse path guards family_id too: revoke_family(undef) would match
+# every family_id-less row via the "// ''" comparison and revoke tokens
+# across different subjects, so a reused result with no family_id must
+# croak before revoke_family is ever called
+{
+    my $eng = fresh_engine();
+    my $stale = first_pair($eng)->{refresh_token};
+
+    no warnings 'redefine';
+    local *StubStore::rotate_refresh_token = sub {
+        return { binding => { client_id => 'c1', subject => 'u' }, reused => 1 };
+    };
+    my $revoke_called = 0;
+    local *StubStore::revoke_family = sub { $revoke_called++; return 0 };
+
+    like(
+        exception { do_refresh( $eng, $stale ) },
+        qr/family_id/,
+        'a reused binding with no family_id croaks instead of revoking blind'
+    );
+    is( $revoke_called, 0,
+        'revoke_family is never called when family_id is missing' );
+}
+
+# THE test: a replay kills the live token, not just the replayed one
+{
+    my $eng   = fresh_engine();
+    my $pair  = first_pair($eng);
+    my $stale = $pair->{refresh_token};
+    my $live  = do_refresh( $eng, $stale )->{refresh_token};
+
+    # attacker replays the stale token
+    isnt( try_refresh( $eng, $stale ), undef,
+        'replaying the stale token is rejected' );
+
+    # the legitimate client's live token must now be dead too
+    isnt( try_refresh( $eng, $live ), undef,
+        'the live token is revoked by the replay (family revoked)' );
+}
+
+# cross-family isolation: one user, two devices, one replay
+{
+    my $eng = fresh_engine();
+    my $a   = first_pair( $eng, $VERIFIER, 'user-9' );
+    my $b   = first_pair( $eng, 'other-verifier-' . ( '1' x 28 ), 'user-9' );
+
+    my $a_stale = $a->{refresh_token};
+    do_refresh( $eng, $a_stale );
+
+    isnt( try_refresh( $eng, $a_stale ), undef,
+        'replay in family A is rejected' );
+
+    # family B belongs to the same subject and must be untouched
+    is( try_refresh( $eng, $b->{refresh_token} ), undef,
+        'family B still refreshes: per-family, not per-subject' );
+}
+
+# a replay from deeper in the chain still kills the family
+{
+    my $eng  = fresh_engine();
+    my $deep = first_pair($eng)->{refresh_token};
+
+    my $rt = $deep;
+    $rt = do_refresh( $eng, $rt )->{refresh_token} for 1 .. 3;
+
+    isnt( try_refresh( $eng, $deep ), undef,
+        'replaying a token from 3 hops back is rejected' );
+    isnt( try_refresh( $eng, $rt ), undef,
+        'and it revokes the family, killing the current token' );
+}
+
+# an unknown token revokes nothing
+{
+    my $eng  = fresh_engine();
+    my $pair = first_pair($eng);
+
+    my $revoked = 0;
+    no warnings 'redefine';
+    my $orig = \&StubStore::revoke_family;
+    local *StubStore::revoke_family = sub { $revoked++; $orig->(@_) };
+
+    isnt( try_refresh( $eng, 'garbage' ), undef,
+        'an unknown refresh token is rejected' );
+    is( $revoked, 0, 'an unknown token revokes no family' );
+
+    is( try_refresh( $eng, $pair->{refresh_token} ), undef,
+        'and the real token still works' );
+}
+
+# the engine revokes the replayed token's own family, exactly once, by
+# family_id: passing anything else (the subject, say) would either revoke
+# nothing or revoke too much
+{
+    my $eng   = fresh_engine();
+    my $stale = first_pair($eng)->{refresh_token};
+    my ($fid) = map { $_->{family_id} } @{ bindings($eng) };
+    do_refresh( $eng, $stale );
+
+    my @args;
+    no warnings 'redefine';
+    my $orig = \&StubStore::revoke_family;
+    local *StubStore::revoke_family
+        = sub { push @args, $_[1]; return $orig->(@_) };
+
+    try_refresh( $eng, $stale );
+    is_deeply( \@args, [$fid],
+        'a replay revokes its own family_id, once' );
+}
+
+# a Store that cannot revoke is broken: the failure must surface, not be
+# swallowed into invalid_grant while the compromised family lives on
+{
+    my $eng   = fresh_engine();
+    my $stale = first_pair($eng)->{refresh_token};
+    do_refresh( $eng, $stale );
+
+    no warnings 'redefine';
+    local *StubStore::revoke_family = sub { die "store is on fire\n" };
+
+    like( try_refresh( $eng, $stale ), qr/store is on fire/,
+        'a failing revoke_family propagates instead of becoming invalid_grant' );
+}
+
+# no oracle: reuse and unknown are indistinguishable to the client
+{
+    my $eng   = fresh_engine();
+    my $stale = first_pair($eng)->{refresh_token};
+    do_refresh( $eng, $stale );
+
+    my $reuse   = try_refresh( $eng, $stale );
+    my $unknown = try_refresh( $eng, 'garbage' );
+
+    is( $reuse->error, $unknown->error,
+        'reuse and unknown share an error code' );
+    is( $reuse->error_description, $unknown->error_description,
+        'and a description: no reuse oracle for an attacker' );
+}
+
+# revoke_family is idempotent
+{
+    my $eng  = fresh_engine();
+    first_pair($eng);
+    my ($fid) = map { $_->{family_id} } @{ bindings($eng) };
+
+    my $first = $eng->store->revoke_family($fid);
+    is( $first, 1, 'revoking a one-token family revokes one token' );
+    is( $eng->store->revoke_family($fid), 0,
+        'revoking again is a no-op, not an error' );
+}
+
+# THE family test: revoke_family revokes every live member of the family,
+# not just one. The engine can never leave more than one live token per
+# family (each rotation tombstones its predecessor), so this state is built
+# directly against the Store instead. A Store that stops after the first
+# match (e.g. "WHERE family_id = ? LIMIT 1") would pass every other test in
+# this file, because those never exercise a family with more than one live
+# token.
+{
+    my $store = StubStore->new;
+    my $b = sub {
+        return { client_id => 'c1', subject => 'u', family_id => 'FAM' };
+    };
+    $store->create_refresh_token( "live$_", $b->(), time + 3600 ) for 1 .. 3;
+    $store->create_refresh_token(
+        'other',
+        { client_id => 'c1', subject => 'u', family_id => 'OTHER' },
+        time + 3600,
+    );
+
+    is( $store->revoke_family('FAM'), 3,
+        'revokes every live token in the family' );
+    ok( $store->rotate_refresh_token("live$_")->{reused}, "live$_ is dead" )
+        for 1 .. 3;
+    ok( !$store->rotate_refresh_token('other')->{reused},
+        'a sibling family is untouched' );
+    is( $store->revoke_family('FAM'), 0, 'revoking again is a no-op' );
 }
 
 done_testing;
