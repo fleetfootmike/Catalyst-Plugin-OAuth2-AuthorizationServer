@@ -64,7 +64,48 @@ fetch-and-delete requirement prevents authorization-code replay.
 =head2 create_refresh_token( $token_hash, \%binding, $expires_at )
 
 Persist a refresh token by its hash (never the raw token). C<\%binding> carries
-C<client_id>, C<subject>, C<scope>, C<resource> and C<family_id>. Return true.
+C<client_id>, C<subject>, C<scope>, C<resource> and C<family_id>. Returns true
+when the token was persisted.
+
+B<Returns false, persisting nothing, if C<family_id> names a revoked family.>
+A rotation already in flight when C<revoke_family> runs would otherwise create
+its successor afterwards, leaving a live token in a family the server believes
+it killed, and an attacker who races two refreshes with a stolen token can
+force exactly that.
+
+B<The check and the insert MUST be mutually exclusive with C<revoke_family>
+for the same family.> Being one method call is what makes that achievable, but
+it is not by itself sufficient, and a single C<INSERT ... WHERE NOT EXISTS>
+against the revoked-families record is B<not> enough under a weak isolation
+level. Under C<READ COMMITTED> the two interleave as textbook write skew:
+
+=over
+
+=item 1.
+
+C<revoke_family> inserts its marker, still uncommitted.
+
+=item 2.
+
+C<revoke_family> sweeps the family's rows; the successor does not exist yet,
+so it sweeps nothing.
+
+=item 3.
+
+C<create_refresh_token>'s C<NOT EXISTS> cannot see the uncommitted marker, so
+it inserts the successor live.
+
+=item 4.
+
+Both commit. The successor is live in a revoked family, which is the very race
+this rule exists to prevent.
+
+=back
+
+Use C<SERIALIZABLE> for both paths, or have both take the same per-family lock
+(for example C<SELECT ... FOR UPDATE> on the family row) before reading or
+writing. Whichever you choose, the two operations must not be able to run
+concurrently for one family.
 
 C<family_id> is an opaque string identifying the rotation chain this token
 belongs to: it is minted when an authorization code is exchanged and inherited
@@ -100,21 +141,36 @@ disables reuse detection: the replay degrades to C<undef>, the engine reads it
 as unknown, and the compromised family survives. Pruning after C<$expires_at>
 is the host application's job.
 
-B<Concurrency note:> a non-atomic implementation enables refresh-token replay
-under concurrent requests. The engine calls C<create_refresh_token> immediately
-after C<rotate_refresh_token> with no transactional envelope: a crash between
-the two calls will invalidate the session. Wrap both operations in a
-transaction if the backend supports it.
+B<Concurrency note:> each Store method MUST be atomic in itself; a
+non-atomic C<rotate_refresh_token> enables refresh-token replay under
+concurrent requests. The engine calls C<create_refresh_token> immediately
+after C<rotate_refresh_token>, and it cannot hold a transaction across the
+two: they are separate calls, so another request's C<revoke_family> can land
+between them. What makes the pair safe is not an envelope around it but the
+rule that C<create_refresh_token> refuses to persist into a revoked family,
+which turns that interleaving into a plain C<invalid_grant> for the in-flight
+rotation. A crash between the two calls will invalidate the session; that is
+the intended failure direction.
 
 =head2 revoke_family( $family_id )
 
-Revoke every refresh token sharing C<$family_id>, live or already tombstoned.
-Return the number newly revoked. Idempotent: revoking an already-revoked
-family returns 0 and is not an error.
+Revoke every refresh token sharing C<$family_id>, live or already tombstoned,
+B<and record the family itself as revoked> so that a rotation in flight cannot
+create a successor into it afterwards (see C<create_refresh_token>). Return the
+number newly revoked. Idempotent: revoking an already-revoked family returns 0
+and is not an error.
 
 An implementation may use a single flag for both "tombstoned by rotation" and
 "revoked by family": in that case an already-tombstoned token counts as
 already revoked, and is not counted again.
+
+B<Retention:> the revoked-family record MUST outlive every token that could
+still belong to the family, i.e. until the latest C<$expires_at> among its
+members has passed. Pruning it earlier reopens the race it exists to close: a
+rotation in flight would find no marker and create its successor. The record is
+per family rather than per token, so it is bounded by authorizations, not by
+rotations. Pruning it once the family's tokens have expired is the host
+application's job, on the same rule as the rotated-token tombstones.
 
 Called when C<rotate_refresh_token> reports a replay. Revoking the family is
 the only defence the server has against a stolen refresh token, because it

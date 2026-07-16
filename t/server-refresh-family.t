@@ -397,4 +397,34 @@ sub bindings ( $eng ) {
     is( $store->revoke_family('FAM'), 0, 'revoking again is a no-op' );
 }
 
+# A replay racing a rotation must not leave a live token in the dead family.
+{
+    my $eng   = fresh_engine();
+    my $stale = first_pair($eng)->{refresh_token};
+
+    my $interleaved = 0;
+    no warnings 'redefine';
+    my $orig = \&StubStore::create_refresh_token;
+    local *StubStore::create_refresh_token = sub {
+        my @args = @_;
+        # R2 lands in R1's gap: after R1 rotated, before R1 created.
+        eval { do_refresh( $eng, $stale ) } unless $interleaved++;
+        return $orig->(@args);
+    };
+
+    my $r1 = eval { do_refresh( $eng, $stale ) };
+    ok( $interleaved, 'the replay interleaved' );
+
+    my $rt = $r1 && $r1->{refresh_token};
+    my $survived = 0;
+    if ($rt) {
+        for ( 1 .. 5 ) {
+            my $next = eval { do_refresh( $eng, $rt ) } or last;
+            $rt = $next->{refresh_token};
+            $survived++;
+        }
+    }
+    is( $survived, 0, 'no rotation survives a raced family revocation' );
+}
+
 done_testing;

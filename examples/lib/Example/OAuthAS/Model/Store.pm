@@ -6,7 +6,7 @@ with 'Catalyst::Plugin::OAuth2::AuthorizationServer::Role::Store';
 
 # Process-wide in-memory storage: fine for a single-process example, NOT for
 # production (use a real datastore there).
-my ( %CLIENTS, %REQUESTS, %CODES, %REFRESH );
+my ( %CLIENTS, %REQUESTS, %CODES, %REFRESH, %REVOKED_FAMILIES );
 
 sub create_client ( $self, $client ) {
     $CLIENTS{ $client->{client_id} } = $client;
@@ -36,6 +36,12 @@ sub consume_auth_code ( $self, $code ) {
 }
 
 sub create_refresh_token ( $self, $hash, $binding, $exp ) {
+    # A successor must not be born into a family that has been revoked. The
+    # check and the insert are one Store call, so this is atomic by
+    # construction; the engine cannot provide that across two calls. A real
+    # datastore would do both in one statement, e.g. an INSERT ... WHERE NOT
+    # EXISTS against the revoked-families table.
+    return 0 if $REVOKED_FAMILIES{ $binding->{family_id} // '' };
     $REFRESH{$hash} = { b => $binding, exp => $exp, revoked => 0 };
     return 1;
 }
@@ -49,6 +55,9 @@ sub rotate_refresh_token ( $self, $hash ) {
 }
 
 sub revoke_family ( $self, $family_id ) {
+    # Mark the FAMILY, not just the rows that exist right now: a rotation in
+    # flight may still create a successor after this returns.
+    $REVOKED_FAMILIES{$family_id} = 1;
     my $n = 0;
     for my $h ( keys %REFRESH ) {
         next if $REFRESH{$h}{revoked};

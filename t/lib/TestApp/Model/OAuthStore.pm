@@ -5,7 +5,7 @@ extends 'Catalyst::Model';
 with 'Catalyst::Plugin::OAuth2::AuthorizationServer::Role::Store';
 
 # Process-wide in-memory storage (one app instance per test process).
-my %CLIENTS; my %REQUESTS; my %CODES; my %REFRESH;
+my %CLIENTS; my %REQUESTS; my %CODES; my %REFRESH; my %REVOKED_FAMILIES;
 
 sub create_client ( $self, $client ) {
     $CLIENTS{ $client->{client_id} } = $client; return $client;
@@ -27,6 +27,10 @@ sub consume_auth_code ( $self, $code ) {
     return $row->{exp} < time ? undef : $row->{b};
 }
 sub create_refresh_token ( $self, $hash, $b, $exp ) {
+    # A successor must not be born into a revoked family. The check and the
+    # insert are one Store call, so this is atomic by construction; the
+    # engine cannot provide that across two calls.
+    return 0 if $REVOKED_FAMILIES{ $b->{family_id} // '' };
     $REFRESH{$hash} = { b => $b, exp => $exp, revoked => 0 }; return 1;
 }
 sub rotate_refresh_token ( $self, $hash ) {
@@ -37,6 +41,9 @@ sub rotate_refresh_token ( $self, $hash ) {
     return { binding => $row->{b} };
 }
 sub revoke_family ( $self, $family_id ) {
+    # Mark the FAMILY, not just the rows that exist right now: a rotation in
+    # flight may still create a successor after this returns.
+    $REVOKED_FAMILIES{$family_id} = 1;
     my $n = 0;
     for my $h ( keys %REFRESH ) {
         next if $REFRESH{$h}{revoked};

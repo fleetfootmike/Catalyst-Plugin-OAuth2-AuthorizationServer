@@ -323,7 +323,11 @@ no RFC 7009 revocation endpoint.
 
 A concurrent double-refresh (the same token presented twice at once, with no
 attacker involved) is indistinguishable from a replay and will revoke the
-family. This is inherent to RFC 9700 reuse detection.
+family. This is inherent to RFC 9700 reuse detection. Both requests fail: the
+one that lost the race is rejected as a replay, and the one still in flight is
+refused when it tries to persist its successor into the now-revoked family, so
+it answers C<invalid_grant> rather than surviving with a live token. The client
+must start a new authorization.
 
 Apps can call C<revoke_refresh_tokens_for_subject> on logout/deactivation.
 

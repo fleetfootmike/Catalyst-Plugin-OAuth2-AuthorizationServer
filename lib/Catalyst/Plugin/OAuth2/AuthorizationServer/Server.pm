@@ -238,7 +238,7 @@ sub _issue_token_pair ( $self, $binding ) {
         $binding->{resource},
     );
     my $refresh = $self->_random_token(32);
-    $self->store->create_refresh_token(
+    my $created = $self->store->create_refresh_token(
         $self->_hash_token($refresh),
         {
             client_id => $binding->{client_id},
@@ -249,6 +249,9 @@ sub _issue_token_pair ( $self, $binding ) {
         },
         $self->_now + $self->refresh_ttl,
     );
+    # The family was revoked while this rotation was in flight: a concurrent
+    # replay was detected. Same generic error as any other dead token.
+    $self->_grant_error('unknown or revoked refresh token') unless $created;
     return {
         access_token  => $access,
         token_type    => 'Bearer',

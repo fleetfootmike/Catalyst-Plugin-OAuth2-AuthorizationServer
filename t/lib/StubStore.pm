@@ -8,6 +8,8 @@ has requests => ( is => 'ro', default => sub { {} } );
 has codes    => ( is => 'ro', default => sub { {} } );
 has refresh  => ( is => 'ro', default => sub { {} } );
 
+has revoked_families => ( is => 'ro', default => sub { {} } );
+
 sub create_client ( $self, $client ) {
     $self->clients->{ $client->{client_id} } = $client;
     return $client;
@@ -35,6 +37,10 @@ sub consume_auth_code ( $self, $code ) {
 }
 
 sub create_refresh_token ( $self, $hash, $binding, $exp ) {
+    # A successor must not be born into a family that has been revoked. The
+    # check and the insert are one Store call, so this is atomic by
+    # construction; the engine cannot provide that across two calls.
+    return 0 if $self->revoked_families->{ $binding->{family_id} // '' };
     $self->refresh->{$hash}
         = { binding => $binding, exp => $exp, revoked => 0 };
     return 1;
@@ -47,6 +53,9 @@ sub rotate_refresh_token ( $self, $hash ) {
     return { binding => $row->{binding} };
 }
 sub revoke_family ( $self, $family_id ) {
+    # Mark the FAMILY, not just the rows that exist right now: a rotation in
+    # flight may still create a successor after this returns.
+    $self->revoked_families->{$family_id} = 1;
     my $n = 0;
     for my $h ( keys %{ $self->refresh } ) {
         my $row = $self->refresh->{$h};
