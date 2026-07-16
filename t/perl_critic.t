@@ -4,8 +4,8 @@ use warnings;
 use Test::More;
 
 # Author/maintainer test: only runs when explicitly requested, so a normal
-# `prove -lr t` (and CPAN smoke testers) skip it. Borrowed from gobbyapi's
-# t/perl_critic.t, gated on a non-Gobby env var and adapted to Test::More.
+# `prove -lr t` (and CPAN smoke testers) skip it. Gated on the PERL_CRITIC_TEST
+# env var and written for Test::More.
 if ( not $ENV{PERL_CRITIC_TEST} ) {
     plan skip_all => 'Set $ENV{PERL_CRITIC_TEST} to a true value to run.';
 }

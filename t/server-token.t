@@ -30,7 +30,7 @@ sub mint_code ( $eng, $verifier ) {
     my $rid = $eng->validate_authorize({
         client_id => 'c1', redirect_uri => 'https://app/cb',
         response_type => 'code', code_challenge => $challenge,
-        code_challenge_method => 'S256', scope => 'gobby:read',
+        code_challenge_method => 'S256', scope => 'example:read',
         resource => 'https://rs/mcp',
     })->{request_id};
     return $eng->issue_code( 'user-9', $rid )->{code};
@@ -48,13 +48,13 @@ sub mint_code ( $eng, $verifier ) {
     });
     is( $tok->{token_type}, 'Bearer', 'Bearer token_type' );
     is( $tok->{expires_in}, 900,      'expires_in = access_ttl' );
-    is( $tok->{scope},      'gobby:read', 'scope echoed' );
+    is( $tok->{scope},      'example:read', 'scope echoed' );
     ok( length $tok->{refresh_token}, 'refresh token issued' );
 
     my $claims = decode_jwt( token => $tok->{access_token}, key => $key );
     is( $claims->{sub},   'user-9',          'sub claim' );
     is( $claims->{aud},   'https://rs/mcp',  'aud = resource' );
-    is( $claims->{scope}, 'gobby:read',      'scope claim' );
+    is( $claims->{scope}, 'example:read',      'scope claim' );
 }
 
 # PKCE mismatch -> invalid_grant
@@ -116,7 +116,7 @@ sub mint_code ( $eng, $verifier ) {
     my $rid = $eng->validate_authorize({
         client_id => 'c1', redirect_uri => 'https://app/cb', response_type => 'code',
         code_challenge => $challenge, code_challenge_method => 'S256',
-        scope => 'gobby:read', resource => 'https://rs/mcp',
+        scope => 'example:read', resource => 'https://rs/mcp',
     })->{request_id};
     my $code = $eng->issue_code( 'user-9', $rid )->{code};
     my $tok = $eng->exchange_authorization_code({
@@ -141,7 +141,7 @@ sub mint_code ( $eng, $verifier ) {
     my $eng = fresh_engine();
     $eng->store->create_auth_code( 'old-code',
         { client_id => 'c1', subject => 'u', redirect_uri => 'https://app/cb',
-          code_challenge => $CHALLENGE, scope => 'gobby:read', resource => 'https://rs/mcp' },
+          code_challenge => $CHALLENGE, scope => 'example:read', resource => 'https://rs/mcp' },
         time - 1 );
     my $e = exception { $eng->exchange_authorization_code({
         code => 'old-code', redirect_uri => 'https://app/cb', code_verifier => $VERIFIER }) };
@@ -152,7 +152,7 @@ sub mint_code ( $eng, $verifier ) {
 {
     my $eng = fresh_engine();
     $eng->store->create_refresh_token( $eng->_hash_token('raw-rt'),
-        { client_id => 'c1', subject => 'u', scope => 'gobby:read',
+        { client_id => 'c1', subject => 'u', scope => 'example:read',
           resource => 'https://rs/mcp' },
         time - 1 );
     my $e = exception { $eng->refresh({ refresh_token => 'raw-rt' }) };

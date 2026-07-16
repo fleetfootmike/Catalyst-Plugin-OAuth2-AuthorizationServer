@@ -7,7 +7,7 @@ use URI;
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Server;
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Error;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 my $CONFIG_KEY = 'Catalyst::Plugin::OAuth2::AuthorizationServer';
 my $JSON = JSON::MaybeXS->new( utf8 => 1, canonical => 1 );
@@ -211,7 +211,7 @@ Authorization Server plugin for Catalyst
             signing_key => $ENV{MCP_OAUTH_JWT_KEY},
             issuer      => 'https://api.example',
             resource    => 'https://api.example/mcp',
-            scopes_supported => [ 'gobby:read' ],
+            scopes_supported => [ 'example:read' ],
         },
     );
 

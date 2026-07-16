@@ -1,5 +1,11 @@
 Revision history for Catalyst-Plugin-OAuth2-AuthorizationServer
 
+0.003     Unreleased
+          - Genericise the example OAuth scopes (now example:*) and remove
+            downstream-application references from the README and the
+            perl_critic author test comment, so the distribution reads as
+            standalone. Examples and tests only; no functional change.
+
 0.002     Unreleased
           - Version bump so consumers reliably install the current code over any
             0.001 already present in an environment (cpanm treats same-version as

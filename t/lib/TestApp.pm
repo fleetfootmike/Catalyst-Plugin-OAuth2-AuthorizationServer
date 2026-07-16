@@ -11,7 +11,7 @@ __PACKAGE__->config(
         signing_key           => 'integration-signing-key-0123456789',
         issuer                => 'http://localhost',
         resource              => 'https://rs/mcp',
-        scopes_supported      => [ 'gobby:read', 'gobby:themes:write' ],
+        scopes_supported      => [ 'example:read', 'example:themes:write' ],
         authorize_endpoint    => 'http://localhost/oauth/authorize',
         token_endpoint        => 'http://localhost/oauth/token',
         registration_endpoint => 'http://localhost/oauth/register',

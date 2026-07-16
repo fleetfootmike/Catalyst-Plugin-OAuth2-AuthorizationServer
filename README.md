@@ -6,9 +6,8 @@ metadata, and HS256 JWT access tokens. Storage, authentication/consent, and
 DCR rate-limiting are app-supplied hooks; the distribution carries no
 application specifics.
 
-See the module POD for configuration and the hook contract. Part of the Gobby
-MCP endpoint work (sub-spec [02c]); layered alongside
-`Catalyst::Plugin::JSONRPC::Server` and `Catalyst::Plugin::MCP`.
+See the module POD for configuration and the hook contract. Designed to layer
+alongside `Catalyst::Plugin::JSONRPC::Server` and `Catalyst::Plugin::MCP`.
 
 ## Limitations (v1)
 

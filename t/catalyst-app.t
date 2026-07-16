@@ -51,7 +51,7 @@ my $code;
     my $res = request( GET '/oauth/authorize?'
         . "client_id=$client_id&redirect_uri=https://app/cb&response_type=code"
         . "&code_challenge=$challenge&code_challenge_method=S256"
-        . '&scope=gobby:read&resource=https://rs/mcp&state=st1' );
+        . '&scope=example:read&resource=https://rs/mcp&state=st1' );
     is( $res->code, 302, 'authorize redirects' );
     my $loc = $res->header('Location');
     like( $loc, qr{\Qhttps://app/cb\E\?code=}, 'redirect carries code' );
@@ -129,7 +129,7 @@ my $refresh;
     my $res = request( GET '/oauth/authorize?'
         . 'client_id=ghost&redirect_uri=https://evil/cb&response_type=code'
         . "&code_challenge=$challenge&code_challenge_method=S256"
-        . '&scope=gobby:read&resource=https://rs/mcp' );
+        . '&scope=example:read&resource=https://rs/mcp' );
     is( $res->code, 400, 'unknown client renders directly, never redirects' );
     is( decode_json( $res->content )->{error}, 'invalid_client',
         'invalid_client body' );

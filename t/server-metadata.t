@@ -34,12 +34,12 @@ require_ok($class);
         authorize_endpoint    => 'https://as/oauth/authorize',
         token_endpoint        => 'https://as/oauth/token',
         registration_endpoint => 'https://as/oauth/register',
-        scopes_supported      => [ 'gobby:read', 'gobby:themes:write' ],
+        scopes_supported      => [ 'example:read', 'example:themes:write' ],
     );
     my $m = $eng->metadata_document;
     is( $m->{authorization_endpoint}, 'https://as/oauth/authorize', 'explicit authorize ep' );
     is_deeply( $m->{scopes_supported},
-        [ 'gobby:read', 'gobby:themes:write' ], 'scopes advertised' );
+        [ 'example:read', 'example:themes:write' ], 'scopes advertised' );
 }
 
 done_testing;

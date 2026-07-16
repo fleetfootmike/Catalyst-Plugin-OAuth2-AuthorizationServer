@@ -166,18 +166,18 @@ sub engine (%over) {
 # scope is only constrained when the AS advertises scopes_supported
 {
     my $e = exception {
-        engine( scopes_supported => ['gobby:read'] )->register_client({
+        engine( scopes_supported => ['example:read'] )->register_client({
             redirect_uris => ['https://app.example/cb'],
-            scope         => 'gobby:read admin:all',
+            scope         => 'example:read admin:all',
         });
     };
     is( $e->error, 'invalid_client_metadata', 'unadvertised scope rejected' );
 
-    my $ok = engine( scopes_supported => ['gobby:read'] )->register_client({
+    my $ok = engine( scopes_supported => ['example:read'] )->register_client({
         redirect_uris => ['https://app.example/cb'],
-        scope         => 'gobby:read',
+        scope         => 'example:read',
     });
-    is( $ok->{scope}, 'gobby:read', 'advertised scope accepted' );
+    is( $ok->{scope}, 'example:read', 'advertised scope accepted' );
 
     my $free = engine->register_client({
         redirect_uris => ['https://app.example/cb'],
@@ -205,13 +205,13 @@ sub engine (%over) {
 
 # a fully-specified valid registration round-trips through the store
 {
-    my $eng = engine( scopes_supported => ['gobby:read'] );
+    my $eng = engine( scopes_supported => ['example:read'] );
     my $client = $eng->register_client({
         redirect_uris              => ['https://app.example/cb'],
         token_endpoint_auth_method => 'none',
         grant_types                => [ 'authorization_code', 'refresh_token' ],
         response_types             => ['code'],
-        scope                      => 'gobby:read',
+        scope                      => 'example:read',
         client_name                => 'Round Trip',
     });
     like( $client->{client_id}, qr/\A[A-Za-z0-9_-]+\z/, 'client_id minted' );

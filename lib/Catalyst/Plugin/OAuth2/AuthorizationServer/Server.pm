@@ -12,7 +12,7 @@ use Catalyst::Plugin::OAuth2::AuthorizationServer::Error;
 use namespace::clean;
 use MooX::StrictConstructor;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 has store       => ( is => 'ro', required => 1 );
 has signing_key => ( is => 'ro', required => 1 );

@@ -3,7 +3,7 @@ use v5.36;
 use Moo;
 use namespace::clean;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 has error             => ( is => 'ro', required => 1 );
 has error_description => ( is => 'ro' );
