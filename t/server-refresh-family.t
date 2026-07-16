@@ -25,7 +25,7 @@ sub mint_code ( $eng, $verifier, $subject = 'user-9' ) {
     my $rid = $eng->validate_authorize({
         client_id => 'c1', redirect_uri => 'https://app/cb',
         response_type => 'code', code_challenge => $challenge,
-        code_challenge_method => 'S256', scope => 'gobby:read',
+        code_challenge_method => 'S256', scope => 'example:read',
         resource => 'https://rs/mcp',
     })->{request_id};
     return $eng->issue_code( $subject, $rid )->{code};

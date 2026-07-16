@@ -211,7 +211,7 @@ Authorization Server plugin for Catalyst
             signing_key => $ENV{MCP_OAUTH_JWT_KEY},
             issuer      => 'https://api.example',
             resource    => 'https://api.example/mcp',
-            scopes_supported => [ 'gobby:read' ],
+            scopes_supported => [ 'example:read' ],
         },
     );
 

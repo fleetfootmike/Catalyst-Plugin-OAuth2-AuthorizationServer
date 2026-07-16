@@ -63,13 +63,13 @@ like(
 my $before = time;
 my $jwt = $eng->mint_access_token({
     sub   => 'user-42',
-    scope => 'gobby:read',
+    scope => 'example:read',
 });
 ok( length $jwt, 'mint returns a token string' );
 
 my $claims = decode_jwt( token => $jwt, key => $key );
 is( $claims->{sub},   'user-42',                  'sub claim' );
-is( $claims->{scope}, 'gobby:read',               'scope claim' );
+is( $claims->{scope}, 'example:read',               'scope claim' );
 is( $claims->{iss},   'https://as.example',       'iss from issuer' );
 is( $claims->{aud},   'https://rs.example/mcp',   'aud from resource' );
 ok( $claims->{exp} >= $before + 900 && $claims->{exp} <= time + 900 + 2,

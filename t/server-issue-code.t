@@ -22,7 +22,7 @@ my $rid = $eng->validate_authorize({
     response_type => 'code',
     code_challenge => 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
     code_challenge_method => 'S256',
-    scope => 'gobby:read', resource => 'https://rs/mcp', state => 'st',
+    scope => 'example:read', resource => 'https://rs/mcp', state => 'st',
 })->{request_id};
 
 my $out = $eng->issue_code( 'user-7', $rid );
@@ -36,7 +36,7 @@ is( $binding->{subject},        'user-7',         'bound to subject' );
 is( $binding->{client_id},      'client-1',       'bound client' );
 is( $binding->{redirect_uri},   'https://app/cb', 'bound redirect' );
 is( $binding->{code_challenge}, 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'bound challenge' );
-is( $binding->{scope},          'gobby:read',     'bound scope' );
+is( $binding->{scope},          'example:read',     'bound scope' );
 is( $binding->{resource},       'https://rs/mcp', 'bound resource' );
 
 # the request was single-use: a second issue against the same rid fails

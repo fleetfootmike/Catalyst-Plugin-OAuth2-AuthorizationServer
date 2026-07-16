@@ -18,7 +18,7 @@ sub fixture {
         signing_key      => 'k' x 32,
         issuer           => 'https://as.example',
         resource         => 'https://rs.example/mcp',
-        scopes_supported => [ 'gobby:read', 'gobby:themes:write' ],
+        scopes_supported => [ 'example:read', 'example:themes:write' ],
     );
     return ( $eng, $store );
 }
@@ -30,7 +30,7 @@ sub good_params (%over) {
         response_type         => 'code',
         code_challenge        => 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
         code_challenge_method => 'S256',
-        scope                 => 'gobby:read',
+        scope                 => 'example:read',
         resource              => 'https://rs.example/mcp',
         state                 => 'xyz',
         %over,
@@ -46,7 +46,7 @@ sub good_params (%over) {
     is( $saved->{client_id},    'client-1',                'saved client_id' );
     is( $saved->{redirect_uri}, 'https://app.example/cb',  'saved redirect_uri' );
     is( $saved->{code_challenge}, 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', 'saved challenge' );
-    is( $saved->{scope},        'gobby:read',              'saved scope' );
+    is( $saved->{scope},        'example:read',              'saved scope' );
     is( $saved->{resource},     'https://rs.example/mcp',  'saved resource' );
     is( $saved->{state},        'xyz',                     'saved state' );
 }
@@ -59,7 +59,7 @@ my %cases = (
     no_challenge    => [ { code_challenge => undef }, 'invalid_request', 1 ],
     plain_method    => [ { code_challenge_method => 'plain' }, 'invalid_request', 1 ],
     short_challenge => [ { code_challenge => 'abc' }, 'invalid_request', 1 ],
-    bad_scope       => [ { scope => 'gobby:read admin:all' }, 'invalid_scope', 1 ],
+    bad_scope       => [ { scope => 'example:read admin:all' }, 'invalid_scope', 1 ],
     bad_resource    => [ { resource => 'https://other/api' }, 'invalid_target', 1 ],
 );
 for my $name ( sort keys %cases ) {
