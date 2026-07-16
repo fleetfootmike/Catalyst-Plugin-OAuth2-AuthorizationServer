@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: "perl ${{ matrix.perl }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        perl: ['5.36', '5.40']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Perl ${{ matrix.perl }}
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: ${{ matrix.perl }}
+          enable-modules-cache: true
+          install-modules-with: cpanm
+          install-modules-args: --notest --quiet --installdeps .
+      - name: Run tests
+        run: prove -lr t
+
+  critic:
+    name: "perl-critic"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Perl
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: '5.40'
+          enable-modules-cache: true
+          install-modules-with: cpanm
+          install-modules-args: --notest --quiet --installdeps .
+      - name: Install Test::Perl::Critic
+        run: cpanm --notest --quiet Test::Perl::Critic
+      - name: Run Perl::Critic
+        env:
+          PERL_CRITIC_TEST: 1
+        run: prove -lr t/perl_critic.t
