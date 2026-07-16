@@ -349,6 +349,29 @@ and run C<perl examples/client.pl>. See F<examples/README.md>.
 
 Mike Whitaker <mike@altrion.org>
 
+Built with tool assistance from Claude Code/(mostly) Opus 4.8 to accelerate
+code generation and maximise test coverage (and reduce typing :D).
+
+With thanks to
+
+=over
+
+=item *
+
+Jesse Vincent for C</superpowers> (L<https://github.com/obra/superpowers>)
+
+=item *
+
+Curtis "Ovid" Poe for C</paad> (L<https://github.com/Ovid/paad>)
+
+=back
+
+for providing an agentic development framework that keeps code authority
+firmly where it belongs.
+
+Iteratively reviewed by Finn Kempers <finn@shadow.cat> with analysis from
+ZCode/GLM-5.2.
+
 =head1 LICENSE
 
 This library is free software; you can redistribute it and/or modify it
