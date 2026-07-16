@@ -7,7 +7,7 @@ use URI;
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Server;
 use Catalyst::Plugin::OAuth2::AuthorizationServer::Error;
 
-our $VERSION = '0.002';
+our $VERSION = '0.003';
 
 my $CONFIG_KEY = 'Catalyst::Plugin::OAuth2::AuthorizationServer';
 my $JSON = JSON::MaybeXS->new( utf8 => 1, canonical => 1 );
