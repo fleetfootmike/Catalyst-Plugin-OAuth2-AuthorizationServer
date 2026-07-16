@@ -35,7 +35,8 @@ code generation and maximise test coverage (and reduce typing :D).
 
 With thanks to
 
-- Jesse Vincent for `/superpowers` (<https://github.com/obra/superpowers>)
+- Jesse Vincent for `/superpowers` (<https://github.com/obra/superpowers>) and the
+  `AGENTS.md` boilerplate
 - Curtis "Ovid" Poe for `/paad` (<https://github.com/Ovid/paad>)
 
 for providing an agentic development framework that keeps code authority

@@ -38,6 +38,10 @@ WriteMakefile(
                 url  => 'https://github.com/fleetfootmike/Catalyst-Plugin-OAuth2-AuthorizationServer.git',
                 web  => 'https://github.com/fleetfootmike/Catalyst-Plugin-OAuth2-AuthorizationServer',
             },
+            bugtracker => {
+                web => 'https://github.com/fleetfootmike/Catalyst-Plugin-OAuth2-AuthorizationServer/issues',
+            },
+            homepage => 'https://github.com/fleetfootmike/Catalyst-Plugin-OAuth2-AuthorizationServer',
         },
     },
     clean => { FILES => 'Catalyst-Plugin-OAuth2-AuthorizationServer-*' },
